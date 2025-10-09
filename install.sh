@@ -96,13 +96,75 @@ print_info "检查脚本文件..."
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# 检测是否为在线安装（通过 curl | bash 方式）
+if [[ ! -f "${SCRIPT_DIR}/xray-manager.sh" ]] || [[ ! -d "${SCRIPT_DIR}/modules" ]]; then
+    print_info "检测到在线安装，正在下载完整项目..."
+
+    # 设置安装目录
+    INSTALL_DIR="/opt/s-xray"
+
+    # 如果目录已存在，询问是否覆盖
+    if [[ -d "$INSTALL_DIR" ]]; then
+        print_warning "安装目录已存在: $INSTALL_DIR"
+        read -p "是否覆盖现有安装? [y/N]: " overwrite
+        if [[ "$overwrite" != "y" && "$overwrite" != "Y" ]]; then
+            print_info "安装已取消"
+            exit 0
+        fi
+        rm -rf "$INSTALL_DIR"
+    fi
+
+    # 创建临时目录
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
+
+    # 下载项目文件
+    print_info "下载项目文件..."
+    if command -v git >/dev/null 2>&1; then
+        # 优先使用 git clone
+        git clone --depth=1 https://github.com/sindricn/s-xray.git s-xray >/dev/null 2>&1
+        if [[ $? -eq 0 ]]; then
+            mv s-xray "$INSTALL_DIR"
+        else
+            print_error "Git 下载失败"
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+    else
+        # 使用 wget 或 curl 下载 zip
+        if command -v wget >/dev/null 2>&1; then
+            wget -q https://github.com/sindricn/s-xray/archive/refs/heads/main.zip -O s-xray.zip
+        elif command -v curl >/dev/null 2>&1; then
+            curl -sL https://github.com/sindricn/s-xray/archive/refs/heads/main.zip -o s-xray.zip
+        else
+            print_error "未找到 wget 或 curl 命令"
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+
+        # 解压文件
+        unzip -q s-xray.zip
+        mv s-xray-main "$INSTALL_DIR"
+    fi
+
+    # 清理临时文件
+    rm -rf "$TEMP_DIR"
+
+    # 更新 SCRIPT_DIR
+    SCRIPT_DIR="$INSTALL_DIR"
+    cd "$SCRIPT_DIR"
+
+    print_success "项目文件下载完成"
+fi
+
+# 验证文件
 if [[ ! -f "${SCRIPT_DIR}/xray-manager.sh" ]]; then
-    print_error "未找到主脚本文件"
+    print_error "未找到主脚本文件: ${SCRIPT_DIR}/xray-manager.sh"
     exit 1
 fi
 
 if [[ ! -d "${SCRIPT_DIR}/modules" ]]; then
-    print_error "未找到模块目录"
+    print_error "未找到模块目录: ${SCRIPT_DIR}/modules"
     exit 1
 fi
 
@@ -128,6 +190,10 @@ echo ""
 echo -e "${GREEN}=====================================${NC}"
 echo -e "${GREEN}         安装完成！${NC}"
 echo -e "${GREEN}=====================================${NC}"
+echo ""
+echo -e "${CYAN}安装信息：${NC}"
+echo -e "  安装目录: ${YELLOW}${SCRIPT_DIR}${NC}"
+echo -e "  全局命令: ${YELLOW}s-xray${NC} / ${YELLOW}xray-manager${NC}"
 echo ""
 echo -e "${CYAN}快速开始：${NC}"
 echo ""

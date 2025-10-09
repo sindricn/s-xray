@@ -35,7 +35,7 @@
 ### 一键安装（推荐）
 
 ```bash
-# 从 GitHub 一键安装
+# 从 GitHub 一键安装（默认安装到 /opt/s-xray）
 curl -fsSL https://raw.githubusercontent.com/sindricn/s-xray/main/install.sh | sudo bash
 
 # 或使用 wget
@@ -46,6 +46,11 @@ wget -qO- https://raw.githubusercontent.com/sindricn/s-xray/main/install.sh | su
 ```bash
 s-xray
 ```
+
+**说明：**
+- 安装脚本会自动下载完整项目到 `/opt/s-xray`
+- 自动创建全局命令 `s-xray`
+- 支持 Git、wget、curl 多种下载方式
 
 ### 手动安装
 
