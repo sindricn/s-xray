@@ -78,11 +78,29 @@ print_info "安装必要依赖..."
 
 case $OS in
     ubuntu|debian)
-        apt-get update -qq
-        apt-get install -y curl wget unzip jq python3 >/dev/null 2>&1
+        print_info "更新软件包列表..."
+        apt-get update -qq 2>&1 | grep -E "^(Get:|Fetched|Reading)" || true
+
+        DEPS="curl wget unzip jq python3 git"
+        for dep in $DEPS; do
+            if ! command -v $dep >/dev/null 2>&1; then
+                print_info "正在安装: $dep"
+                apt-get install -y $dep 2>&1 | grep -E "^(Setting up|Unpacking)" || true
+            else
+                print_info "已安装: $dep ✓"
+            fi
+        done
         ;;
     centos|rhel|fedora)
-        yum install -y curl wget unzip jq python3 >/dev/null 2>&1
+        DEPS="curl wget unzip jq python3 git"
+        for dep in $DEPS; do
+            if ! command -v $dep >/dev/null 2>&1; then
+                print_info "正在安装: $dep"
+                yum install -y $dep 2>&1 | grep -E "^(Installing|Complete)" || true
+            else
+                print_info "已安装: $dep ✓"
+            fi
+        done
         ;;
     *)
         print_warning "未知系统，跳过依赖安装"
@@ -174,6 +192,8 @@ print_success "脚本文件检查完成"
 print_info "设置执行权限..."
 chmod +x "${SCRIPT_DIR}/xray-manager.sh"
 chmod +x "${SCRIPT_DIR}/modules/"*.sh 2>/dev/null || true
+chmod +x "${SCRIPT_DIR}/install.sh" 2>/dev/null || true
+chmod +x "${SCRIPT_DIR}/uninstall.sh" 2>/dev/null || true
 
 print_success "权限设置完成"
 
@@ -211,14 +231,22 @@ echo -e "     - 添加用户"
 echo -e "     - 生成订阅"
 echo -e "     - 开放防火墙端口"
 echo ""
+echo -e "${CYAN}卸载方式：${NC}"
+echo -e "  ${YELLOW}bash ${SCRIPT_DIR}/uninstall.sh${NC}"
+echo ""
 echo -e "${CYAN}文档：${NC}"
 echo -e "  查看完整文档: ${YELLOW}${SCRIPT_DIR}/README.md${NC}"
 echo ""
 echo -e "${CYAN}感谢使用 Xray 管理脚本！${NC}"
 echo ""
 
-# 询问是否立即启动
-read -p "是否立即启动管理脚本? [Y/n]: " start_now
-if [[ "$start_now" != "n" && "$start_now" != "N" ]]; then
-    exec "${SCRIPT_DIR}/xray-manager.sh"
+# 询问是否立即启动（仅在交互式终端时询问）
+if [[ -t 0 ]]; then
+    read -p "是否立即启动管理脚本? [Y/n]: " start_now
+    if [[ "$start_now" != "n" && "$start_now" != "N" ]]; then
+        exec "${SCRIPT_DIR}/xray-manager.sh"
+    fi
+else
+    # 非交互式终端（通过管道安装）不自动启动
+    print_info "非交互模式，安装完成。请手动运行 's-xray' 启动脚本"
 fi

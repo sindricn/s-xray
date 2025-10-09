@@ -451,20 +451,51 @@ sysctl -p
 
 ## 卸载
 
+### 一键卸载（推荐）
+
 ```bash
-# 使用脚本卸载
+# 在线卸载（从 GitHub 下载卸载脚本）
+curl -fsSL https://raw.githubusercontent.com/sindricn/s-xray/main/uninstall.sh | sudo bash
+
+# 或使用本地脚本卸载
+sudo bash /opt/s-xray/uninstall.sh
+```
+
+**卸载选项：**
+- 自动停止并删除 Xray 服务
+- 删除管理脚本和全局命令
+- 可选保留用户数据和配置备份
+- 可选清理防火墙规则
+
+### 使用脚本卸载
+
+```bash
 ./xray-manager.sh
 选择：1 -> 2
+```
 
-# 手动卸载
+### 手动卸载
+
+```bash
+# 完全卸载
 systemctl stop xray
 systemctl disable xray
 rm -rf /usr/local/xray
+rm -rf /opt/s-xray
 rm -f /etc/systemd/system/xray.service
+rm -f /usr/local/bin/s-xray
+rm -f /usr/local/bin/xray-manager
 systemctl daemon-reload
 ```
 
 ## 更新日志
+
+### v1.0.1 (2025-10-09)
+- ✅ 新增一键安装/卸载脚本
+- ✅ 添加 `s-xray` 快捷命令
+- ✅ 优化依赖安装过程，显示详细日志
+- ✅ 修复在线安装时的交互问题
+- ✅ 支持保留用户数据的卸载选项
 
 ### v1.0.0 (2025-10-07)
 - ✅ 初始版本发布
