@@ -3,7 +3,161 @@
 #================================================================
 # 节点管理模块
 # 功能：添加、删除、查看、修改节点（VLESS/VMess/Trojan/Shadowsocks）
+# 三层架构：协议层 - 传输层 - 加密层（TLS/Reality）
 #================================================================
+
+# 生成 Reality 密钥对
+generate_reality_keypair() {
+    "$XRAY_BIN" x25519 2>/dev/null | head -2
+}
+
+# 一键搭建 VLESS + Reality + TCP 节点
+quick_add_vless_reality() {
+    clear
+    echo -e "${CYAN}=====================================${NC}"
+    echo -e "${CYAN}    一键搭建 VLESS + Reality 节点${NC}"
+    echo -e "${CYAN}=====================================${NC}"
+    echo ""
+    echo -e "${YELLOW}说明：${NC}"
+    echo -e "  - 协议层: VLESS (零加密，性能最优)"
+    echo -e "  - 传输层: TCP (稳定可靠)"
+    echo -e "  - 加密层: Reality (最新抗审查技术)"
+    echo ""
+
+    # 基础配置
+    read -p "请输入监听端口 [默认: 443]: " port
+    port=${port:-443}
+
+    read -p "请输入用户UUID [留空自动生成]: " uuid
+    if [[ -z "$uuid" ]]; then
+        uuid=$(generate_uuid)
+        print_info "自动生成 UUID: $uuid"
+    fi
+
+    read -p "请输入用户邮箱/备注 [默认: user@reality]: " email
+    email=${email:-user@reality}
+
+    # Reality 配置
+    echo ""
+    echo -e "${CYAN}Reality 配置：${NC}"
+
+    read -p "请输入目标网站 (SNI) [默认: www.microsoft.com]: " dest_server
+    dest_server=${dest_server:-www.microsoft.com}
+
+    read -p "请输入伪装域名 [默认: $dest_server]: " server_names
+    server_names=${server_names:-$dest_server}
+
+    # 生成 Reality 密钥对
+    print_info "生成 Reality 密钥对..."
+    local keypair=$(generate_reality_keypair)
+    local private_key=$(echo "$keypair" | grep "Private key:" | awk '{print $3}')
+    local public_key=$(echo "$keypair" | grep "Public key:" | awk '{print $3}')
+
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        print_error "密钥生成失败，请检查 Xray 是否正确安装"
+        return 1
+    fi
+
+    print_success "私钥: $private_key"
+    print_success "公钥: $public_key"
+
+    # 生成 shortId (8-16位十六进制)
+    local short_id=$(openssl rand -hex 8)
+    print_info "ShortId: $short_id"
+
+    # 生成配置
+    local inbound_config=$(cat <<EOF
+    {
+      "port": ${port},
+      "protocol": "vless",
+      "tag": "vless-reality-${port}",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}",
+            "email": "${email}",
+            "level": 0,
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${dest_server}:443",
+          "xver": 0,
+          "serverNames": [
+            "${server_names}"
+          ],
+          "privateKey": "${private_key}",
+          "shortIds": [
+            "${short_id}"
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"]
+      }
+    }
+EOF
+)
+
+    # 保存节点信息
+    save_node_info "vless" "$port" "$uuid" "$email" "tcp" "$inbound_config"
+
+    # 更新配置文件
+    add_inbound_to_config "$inbound_config"
+
+    # 重启服务
+    restart_xray
+
+    echo ""
+    echo -e "${GREEN}=====================================${NC}"
+    echo -e "${GREEN}    VLESS + Reality 节点创建成功！${NC}"
+    echo -e "${GREEN}=====================================${NC}"
+    echo ""
+    echo -e "${CYAN}节点信息：${NC}"
+    echo -e "  端口: ${YELLOW}$port${NC}"
+    echo -e "  UUID: ${YELLOW}$uuid${NC}"
+    echo -e "  Flow: ${YELLOW}xtls-rprx-vision${NC}"
+    echo ""
+    echo -e "${CYAN}Reality 配置：${NC}"
+    echo -e "  目标网站: ${YELLOW}$dest_server${NC}"
+    echo -e "  伪装域名: ${YELLOW}$server_names${NC}"
+    echo -e "  公钥: ${YELLOW}$public_key${NC}"
+    echo -e "  ShortId: ${YELLOW}$short_id${NC}"
+    echo ""
+    echo -e "${YELLOW}提示：请保存以上信息用于客户端配置${NC}"
+    echo ""
+
+    # 生成分享链接 (Reality 格式)
+    generate_vless_reality_share "$uuid" "$email" "$port" "$server_names" "$public_key" "$short_id"
+}
+
+# 生成 VLESS Reality 分享链接
+generate_vless_reality_share() {
+    local uuid=$1
+    local email=$2
+    local port=$3
+    local sni=$4
+    local public_key=$5
+    local short_id=$6
+
+    # 获取服务器 IP
+    local server_ip=$(curl -s ip.sb 2>/dev/null || echo "YOUR_SERVER_IP")
+
+    # 构建分享链接
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${email}"
+
+    echo -e "${CYAN}分享链接：${NC}"
+    echo -e "${GREEN}$share_link${NC}"
+    echo ""
+    echo -e "${YELLOW}提示：复制以上链接导入到支持 Reality 的客户端${NC}"
+}
 
 # 读取 VLESS 配置文档
 read_vless_doc() {

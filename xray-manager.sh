@@ -137,25 +137,34 @@ menu_node() {
     while true; do
         clear
         echo -e "${CYAN}====== 节点管理 ======${NC}"
-        echo -e "${GREEN}1.${NC} 添加 VLESS 节点"
-        echo -e "${GREEN}2.${NC} 添加 VMess 节点"
-        echo -e "${GREEN}3.${NC} 添加 Trojan 节点"
-        echo -e "${GREEN}4.${NC} 添加 Shadowsocks 节点"
-        echo -e "${GREEN}5.${NC} 删除节点"
-        echo -e "${GREEN}6.${NC} 查看节点列表"
-        echo -e "${GREEN}7.${NC} 修改节点配置"
+        echo ""
+        echo -e "${YELLOW}⚡ 快速搭建：${NC}"
+        echo -e "${GREEN}1.${NC} 【推荐】一键搭建 VLESS + Reality 节点"
+        echo ""
+        echo -e "${CYAN}📡 协议管理：${NC}"
+        echo -e "${GREEN}2.${NC} 添加 VLESS 节点 (自定义)"
+        echo -e "${GREEN}3.${NC} 添加 VMess 节点"
+        echo -e "${GREEN}4.${NC} 添加 Trojan 节点"
+        echo -e "${GREEN}5.${NC} 添加 Shadowsocks 节点"
+        echo ""
+        echo -e "${CYAN}🔧 节点管理：${NC}"
+        echo -e "${GREEN}6.${NC} 删除节点"
+        echo -e "${GREEN}7.${NC} 查看节点列表"
+        echo -e "${GREEN}8.${NC} 修改节点配置"
+        echo ""
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-7]: " choice
+        read -p "请选择操作 [0-8]: " choice
 
         case $choice in
-            1) add_vless_node ;;
-            2) add_vmess_node ;;
-            3) add_trojan_node ;;
-            4) add_shadowsocks_node ;;
-            5) delete_node ;;
-            6) list_nodes ;;
-            7) modify_node ;;
+            1) quick_add_vless_reality ;;
+            2) add_vless_node ;;
+            3) add_vmess_node ;;
+            4) add_trojan_node ;;
+            5) add_shadowsocks_node ;;
+            6) delete_node ;;
+            7) list_nodes ;;
+            8) modify_node ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac

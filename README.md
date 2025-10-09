@@ -16,12 +16,20 @@
 
 ### 🎯 协议支持
 
-| 协议 | 传输方式 | TLS/XTLS | 特性 |
-|------|---------|----------|------|
-| VLESS | TCP/WS/gRPC/H2 | ✅ | XTLS Vision、零加密 |
-| VMess | TCP/WS/mKCP | ✅ | 多种加密方式 |
-| Trojan | TCP | ✅ | 回落配置 |
-| Shadowsocks | TCP/UDP | ❌ | 2022版加密 |
+| 协议 | 传输方式 | 加密层 | 特性 |
+|------|---------|-------|------|
+| VLESS | TCP/WS/gRPC/H2 | TLS/Reality | XTLS Vision、零加密、Reality 抗审查 |
+| VMess | TCP/WS/mKCP | TLS | 多种加密方式 |
+| Trojan | TCP | TLS | 回落配置 |
+| Shadowsocks | TCP/UDP | 无 | 2022版加密 |
+
+### ⚡ 一键搭建
+
+**VLESS + Reality 节点**（推荐）
+- 协议层：VLESS (零加密，性能最优)
+- 传输层：TCP (稳定可靠)
+- 加密层：Reality (最新抗审查技术)
+- 特点：无需域名和证书，自动生成密钥对
 
 ## 系统要求
 
@@ -76,7 +84,9 @@ sudo ./xray-manager.sh
 
 2. **添加节点**
    ```
-   主菜单 -> 2. 节点管理 -> 选择协议类型
+   主菜单 -> 2. 节点管理 -> 1. 一键搭建 VLESS + Reality 节点（推荐）
+
+   或选择其他协议类型自定义配置
    ```
 
 3. **添加用户**
@@ -117,18 +127,65 @@ sudo ./xray-manager.sh
 
 ### 2. 节点管理
 
-#### VLESS 节点
+#### 🚀 一键搭建 VLESS + Reality（推荐）
+
+**三层架构**：
+- **协议层**：VLESS (零加密，性能最优)
+- **传输层**：TCP (稳定可靠)
+- **加密层**：Reality (最新抗审查技术)
+
+**特点**：
+- 无需域名和证书
+- 自动生成密钥对和 ShortId
+- 自动生成分享链接
+- 抗主动探测和审查
+
+**配置流程**：
+```bash
+主菜单 -> 2. 节点管理 -> 1. 一键搭建 VLESS + Reality 节点
+
+配置项：
+- 监听端口 [默认: 443]
+- 用户 UUID [自动生成]
+- 用户备注 [默认: user@reality]
+- 目标网站 (SNI) [默认: www.microsoft.com]
+- 伪装域名 [默认: 同目标网站]
+
+自动生成：
+- Reality 密钥对（公钥/私钥）
+- ShortId (8-16位)
+- 分享链接
+```
+
+**输出信息**：
+```
+节点信息：
+  端口: 443
+  UUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  Flow: xtls-rprx-vision
+
+Reality 配置：
+  目标网站: www.microsoft.com
+  伪装域名: www.microsoft.com
+  公钥: xxxxxxxxxxxxxxxxxxxxxxxxxx
+  ShortId: xxxxxxxxxxxxxxxx
+
+分享链接：vless://...
+```
+
+#### VLESS 节点（自定义）
 
 **特点**：
 - 支持 XTLS Vision 流控
 - 零加密开销
 - 多种传输协议
+- 支持 TLS/Reality 加密
 
 **配置选项**：
 - 端口：自定义监听端口
 - UUID：自动生成或手动指定
 - 传输：TCP、WebSocket、gRPC、HTTP/2
-- TLS：支持自签名或自有证书
+- 加密：TLS 或 Reality
 
 **示例**：
 ```bash
@@ -136,7 +193,7 @@ sudo ./xray-manager.sh
 UUID: 自动生成
 传输: WebSocket
 路径: /ws
-TLS: 启用
+加密: TLS
 域名: example.com
 ```
 
@@ -489,6 +546,14 @@ systemctl daemon-reload
 ```
 
 ## 更新日志
+
+### v1.1.0 (2025-10-09)
+- ✅ **新增 Reality 支持**：三层架构（协议-传输-加密）
+- ✅ **一键搭建 VLESS + Reality 节点**：无需域名，自动生成密钥
+- ✅ 自动生成 Reality 分享链接
+- ✅ 优化节点菜单结构和用户体验
+- ✅ 修复软链接模块目录解析问题
+- ✅ 修复重复安装逻辑，支持更新模式
 
 ### v1.0.1 (2025-10-09)
 - ✅ 新增一键安装/卸载脚本
