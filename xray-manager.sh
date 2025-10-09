@@ -39,11 +39,21 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 
 # 加载模块
 source_modules() {
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # 解析真实脚本路径（处理软链接）
+    local script_path="${BASH_SOURCE[0]}"
+
+    # 如果是软链接，解析真实路径
+    if [[ -L "$script_path" ]]; then
+        script_path="$(readlink -f "$script_path")"
+    fi
+
+    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
     local modules_dir="${script_dir}/modules"
 
     if [[ ! -d "$modules_dir" ]]; then
         print_error "模块目录不存在: $modules_dir"
+        print_error "脚本路径: $script_path"
+        print_error "脚本目录: $script_dir"
         exit 1
     fi
 

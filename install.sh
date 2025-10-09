@@ -121,15 +121,22 @@ if [[ ! -f "${SCRIPT_DIR}/xray-manager.sh" ]] || [[ ! -d "${SCRIPT_DIR}/modules"
     # 设置安装目录
     INSTALL_DIR="/opt/s-xray"
 
-    # 如果目录已存在，询问是否覆盖
+    # 如果目录已存在，更新而不是删除
     if [[ -d "$INSTALL_DIR" ]]; then
-        print_warning "安装目录已存在: $INSTALL_DIR"
-        read -p "是否覆盖现有安装? [y/N]: " overwrite
-        if [[ "$overwrite" != "y" && "$overwrite" != "Y" ]]; then
-            print_info "安装已取消"
-            exit 0
+        print_info "检测到已安装，将更新到最新版本..."
+
+        # 备份用户数据（如果存在）
+        if [[ -d "$INSTALL_DIR/data" ]]; then
+            print_info "备份用户数据..."
+            BACKUP_DIR="/tmp/s-xray-backup-$(date +%Y%m%d%H%M%S)"
+            mkdir -p "$BACKUP_DIR"
+            cp -r "$INSTALL_DIR/data" "$BACKUP_DIR/" 2>/dev/null || true
+            print_success "用户数据已备份到: $BACKUP_DIR"
         fi
-        rm -rf "$INSTALL_DIR"
+
+        # 删除旧的脚本文件，但保留数据目录
+        print_info "清理旧版本文件..."
+        rm -rf "$INSTALL_DIR"/*.sh "$INSTALL_DIR"/modules 2>/dev/null || true
     fi
 
     # 创建临时目录
@@ -138,17 +145,21 @@ if [[ ! -f "${SCRIPT_DIR}/xray-manager.sh" ]] || [[ ! -d "${SCRIPT_DIR}/modules"
 
     # 下载项目文件
     print_info "下载项目文件..."
+    DOWNLOAD_SUCCESS=false
+
     if command -v git >/dev/null 2>&1; then
         # 优先使用 git clone
         git clone --depth=1 https://github.com/sindricn/s-xray.git s-xray >/dev/null 2>&1
         if [[ $? -eq 0 ]]; then
-            mv s-xray "$INSTALL_DIR"
-        else
-            print_error "Git 下载失败"
-            rm -rf "$TEMP_DIR"
-            exit 1
+            # 创建或更新安装目录
+            mkdir -p "$INSTALL_DIR"
+            # 复制文件到安装目录（保留数据目录）
+            cp -r s-xray/* "$INSTALL_DIR/" 2>/dev/null || true
+            DOWNLOAD_SUCCESS=true
         fi
-    else
+    fi
+
+    if [[ "$DOWNLOAD_SUCCESS" == "false" ]]; then
         # 使用 wget 或 curl 下载 zip
         if command -v wget >/dev/null 2>&1; then
             wget -q https://github.com/sindricn/s-xray/archive/refs/heads/main.zip -O s-xray.zip
@@ -161,8 +172,27 @@ if [[ ! -f "${SCRIPT_DIR}/xray-manager.sh" ]] || [[ ! -d "${SCRIPT_DIR}/modules"
         fi
 
         # 解压文件
-        unzip -q s-xray.zip
-        mv s-xray-main "$INSTALL_DIR"
+        if unzip -q s-xray.zip 2>/dev/null; then
+            # 创建或更新安装目录
+            mkdir -p "$INSTALL_DIR"
+            # 复制文件到安装目录（保留数据目录）
+            cp -r s-xray-main/* "$INSTALL_DIR/" 2>/dev/null || true
+            DOWNLOAD_SUCCESS=true
+        fi
+    fi
+
+    # 检查下载是否成功
+    if [[ "$DOWNLOAD_SUCCESS" == "false" ]]; then
+        print_error "项目文件下载失败"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+
+    # 恢复用户数据（如果有备份）
+    if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR/data" ]]; then
+        print_info "恢复用户数据..."
+        cp -r "$BACKUP_DIR/data" "$INSTALL_DIR/" 2>/dev/null || true
+        print_success "用户数据已恢复"
     fi
 
     # 清理临时文件
