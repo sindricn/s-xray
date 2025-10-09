@@ -95,6 +95,10 @@ show_menu() {
     echo -e "${GREEN}5.${NC}  状态监控"
     echo -e "${GREEN}6.${NC}  防火墙管理"
     echo -e "${GREEN}7.${NC}  配置管理"
+    echo -e "${GREEN}8.${NC}  域名管理"
+    echo -e "${GREEN}9.${NC}  证书管理"
+    echo ""
+    echo -e "${RED}99.${NC} 卸载脚本"
     echo -e "${GREEN}0.${NC}  退出脚本"
     echo ""
     echo -e "${CYAN}=====================================${NC}"
@@ -323,7 +327,7 @@ main() {
 
     while true; do
         show_menu
-        read -p "请选择操作 [0-7]: " choice
+        read -p "请选择操作: " choice
 
         case $choice in
             1) menu_core ;;
@@ -333,6 +337,31 @@ main() {
             5) menu_monitor ;;
             6) menu_firewall ;;
             7) menu_config ;;
+            8) domain_management_menu ;;
+            9) certificate_management_menu ;;
+            99)
+                # 卸载脚本
+                clear
+                echo -e "${RED}=====================================${NC}"
+                echo -e "${RED}         警告：卸载脚本${NC}"
+                echo -e "${RED}=====================================${NC}"
+                echo ""
+                echo -e "${YELLOW}此操作将卸载 s-xray 管理脚本${NC}"
+                echo ""
+                read -p "确认卸载? [y/N]: " confirm
+                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                    # 检查卸载脚本是否存在
+                    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                    if [[ -f "${script_dir}/uninstall.sh" ]]; then
+                        exec bash "${script_dir}/uninstall.sh"
+                    elif [[ -f "/opt/s-xray/uninstall.sh" ]]; then
+                        exec bash "/opt/s-xray/uninstall.sh"
+                    else
+                        print_error "未找到卸载脚本"
+                        print_info "请手动运行: bash /opt/s-xray/uninstall.sh"
+                    fi
+                fi
+                ;;
             0)
                 print_info "感谢使用 Xray 管理脚本！"
                 exit 0

@@ -704,10 +704,33 @@ EOF
 delete_node() {
     list_nodes
 
-    read -p "请输入要删除的节点端口: " port
-    if [[ -z "$port" ]]; then
-        print_error "端口不能为空"
+    echo ""
+    read -p "请输入要删除的节点序号或端口: " input
+    if [[ -z "$input" ]]; then
+        print_error "输入不能为空"
         return 1
+    fi
+
+    local port=""
+    # 判断是序号还是端口
+    if [[ "$input" =~ ^[0-9]+$ ]] && [[ "$input" -le 100 ]]; then
+        # 可能是序号，尝试获取端口
+        port=$(get_node_port_by_index "$input")
+        if [[ -z "$port" || "$port" == "null" ]]; then
+            # 不是有效序号，当作端口处理
+            port="$input"
+        else
+            print_info "选择的节点端口: $port"
+        fi
+    else
+        port="$input"
+    fi
+
+    # 确认删除
+    read -p "确认删除端口 $port 的节点? [y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        print_info "已取消删除"
+        return 0
     fi
 
     # 从配置文件中删除
@@ -737,22 +760,46 @@ list_nodes() {
         return 0
     fi
 
-    printf "%-15s %-10s %-40s %-20s\n" "协议" "端口" "ID/密码" "备注"
-    echo "--------------------------------------------------------------------------------------------------------"
+    printf "%-5s %-15s %-10s %-40s %-20s\n" "序号" "协议" "端口" "ID/密码" "备注"
+    echo "------------------------------------------------------------------------------------------------------------"
 
+    local index=1
     while IFS='|' read -r protocol port id email; do
-        printf "%-15s %-10s %-40s %-20s\n" "$protocol" "$port" "$id" "$email"
+        printf "%-5s %-15s %-10s %-40s %-20s\n" "$index" "$protocol" "$port" "$id" "$email"
+        ((index++))
     done <<< "$nodes"
+}
+
+# 根据序号获取节点端口
+get_node_port_by_index() {
+    local index=$1
+    jq -r ".nodes[$((index-1))].port" "$NODES_FILE" 2>/dev/null
 }
 
 # 修改节点
 modify_node() {
     list_nodes
 
-    read -p "请输入要修改的节点端口: " port
-    if [[ -z "$port" ]]; then
-        print_error "端口不能为空"
+    echo ""
+    read -p "请输入要修改的节点序号或端口: " input
+    if [[ -z "$input" ]]; then
+        print_error "输入不能为空"
         return 1
+    fi
+
+    local port=""
+    # 判断是序号还是端口
+    if [[ "$input" =~ ^[0-9]+$ ]] && [[ "$input" -le 100 ]]; then
+        # 可能是序号，尝试获取端口
+        port=$(get_node_port_by_index "$input")
+        if [[ -z "$port" || "$port" == "null" ]]; then
+            # 不是有效序号，当作端口处理
+            port="$input"
+        else
+            print_info "选择的节点端口: $port"
+        fi
+    else
+        port="$input"
     fi
 
     print_info "节点修改功能开发中..."
