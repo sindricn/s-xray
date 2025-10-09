@@ -32,17 +32,33 @@
 
 ## 快速开始
 
-### 安装
+### 一键安装（推荐）
+
+```bash
+# 从 GitHub 一键安装
+curl -fsSL https://raw.githubusercontent.com/sindricn/s-xray/main/install.sh | sudo bash
+
+# 或使用 wget
+wget -qO- https://raw.githubusercontent.com/sindricn/s-xray/main/install.sh | sudo bash
+```
+
+安装完成后，直接使用快捷命令启动：
+```bash
+s-xray
+```
+
+### 手动安装
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-repo/s-xray.git
+git clone https://github.com/sindricn/s-xray.git
 cd s-xray
 
-# 赋予执行权限
-chmod +x xray-manager.sh
+# 运行安装脚本
+sudo bash install.sh
 
-# 运行脚本
+# 或直接运行主脚本
+chmod +x xray-manager.sh
 sudo ./xray-manager.sh
 ```
 
@@ -469,8 +485,8 @@ systemctl daemon-reload
 
 ## 联系方式
 
-- Issues: [GitHub Issues](https://github.com/your-repo/s-xray/issues)
-- Email: your-email@example.com
+- Issues: [GitHub Issues](https://github.com/sindricn/s-xray/issues)
+- GitHub: [https://github.com/sindricn/s-xray](https://github.com/sindricn/s-xray)
 
 ## 免责声明
 

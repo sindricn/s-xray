@@ -118,9 +118,10 @@ print_success "权限设置完成"
 # 创建软链接
 print_info "创建命令软链接..."
 ln -sf "${SCRIPT_DIR}/xray-manager.sh" /usr/local/bin/xray-manager 2>/dev/null || true
+ln -sf "${SCRIPT_DIR}/xray-manager.sh" /usr/local/bin/s-xray 2>/dev/null || true
 
-if [[ -f /usr/local/bin/xray-manager ]]; then
-    print_success "可以使用 'xray-manager' 命令启动脚本"
+if [[ -f /usr/local/bin/s-xray ]]; then
+    print_success "可以使用 's-xray' 或 'xray-manager' 命令启动脚本"
 fi
 
 echo ""
@@ -131,6 +132,8 @@ echo ""
 echo -e "${CYAN}快速开始：${NC}"
 echo ""
 echo -e "  1. 启动管理脚本："
+echo -e "     ${YELLOW}s-xray${NC}  ${GREEN}(推荐)${NC}"
+echo -e "     或"
 echo -e "     ${YELLOW}xray-manager${NC}"
 echo -e "     或"
 echo -e "     ${YELLOW}${SCRIPT_DIR}/xray-manager.sh${NC}"
