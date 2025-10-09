@@ -6,9 +6,87 @@
 # 三层架构：协议层 - 传输层 - 加密层（TLS/Reality）
 #================================================================
 
+# 测试 Reality 密钥生成（调试用）
+test_reality_keygen() {
+    echo -e "${CYAN}====== Reality 密钥生成测试 ======${NC}"
+    echo ""
+
+    # 检查 Xray 路径
+    echo -e "${YELLOW}1. 检查 Xray 安装：${NC}"
+    if [[ -f "$XRAY_BIN" ]]; then
+        print_success "Xray 已安装: $XRAY_BIN"
+        echo "   版本: $("$XRAY_BIN" version 2>&1 | head -1)"
+    else
+        print_error "Xray 未安装: $XRAY_BIN"
+        return 1
+    fi
+
+    # 检查执行权限
+    echo ""
+    echo -e "${YELLOW}2. 检查执行权限：${NC}"
+    if [[ -x "$XRAY_BIN" ]]; then
+        print_success "有执行权限"
+    else
+        print_error "没有执行权限"
+        echo "   修复命令: chmod +x $XRAY_BIN"
+    fi
+
+    # 测试 x25519 命令
+    echo ""
+    echo -e "${YELLOW}3. 测试 x25519 命令：${NC}"
+    echo "   运行命令: $XRAY_BIN x25519"
+    echo ""
+    local output=$("$XRAY_BIN" x25519 2>&1)
+    local exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        print_success "命令执行成功"
+        echo ""
+        echo -e "${CYAN}原始输出：${NC}"
+        echo "$output"
+        echo ""
+
+        # 尝试解析
+        echo -e "${YELLOW}4. 解析密钥：${NC}"
+        local private_key=$(echo "$output" | grep -i "Private" | awk '{print $NF}')
+        local public_key=$(echo "$output" | grep -i "Public" | awk '{print $NF}')
+
+        if [[ -n "$private_key" && -n "$public_key" ]]; then
+            print_success "解析成功"
+            echo "   私钥: $private_key"
+            echo "   公钥: $public_key"
+        else
+            print_error "解析失败"
+        fi
+    else
+        print_error "命令执行失败 (退出码: $exit_code)"
+        echo ""
+        echo -e "${CYAN}错误输出：${NC}"
+        echo "$output"
+    fi
+}
+
 # 生成 Reality 密钥对
 generate_reality_keypair() {
-    "$XRAY_BIN" x25519 2>/dev/null | head -2
+    # 检查 Xray 是否安装
+    if [[ ! -f "$XRAY_BIN" ]]; then
+        print_error "Xray 未安装，请先安装 Xray 内核"
+        return 1
+    fi
+
+    # 尝试生成密钥对
+    local output=$("$XRAY_BIN" x25519 2>&1)
+    local exit_code=$?
+
+    # 检查是否成功
+    if [[ $exit_code -ne 0 ]]; then
+        print_error "密钥生成失败，错误信息："
+        echo "$output"
+        return 1
+    fi
+
+    # 返回结果
+    echo "$output"
 }
 
 # 一键搭建 VLESS + Reality + TCP 节点
@@ -49,12 +127,51 @@ quick_add_vless_reality() {
 
     # 生成 Reality 密钥对
     print_info "生成 Reality 密钥对..."
-    local keypair=$(generate_reality_keypair)
-    local private_key=$(echo "$keypair" | grep "Private key:" | awk '{print $3}')
-    local public_key=$(echo "$keypair" | grep "Public key:" | awk '{print $3}')
 
+    # 先检查 Xray 是否安装
+    if [[ ! -f "$XRAY_BIN" ]]; then
+        print_error "Xray 未安装！请先通过菜单安装 Xray 内核"
+        echo ""
+        print_info "安装路径: 主菜单 -> 1. 内核管理 -> 1. 安装 Xray"
+        return 1
+    fi
+
+    local keypair=$(generate_reality_keypair)
+    if [[ $? -ne 0 ]]; then
+        print_error "密钥生成失败"
+        echo ""
+        print_info "调试信息："
+        echo "  Xray 路径: $XRAY_BIN"
+        echo "  Xray 版本: $("$XRAY_BIN" version 2>&1 | head -1)"
+        echo ""
+        print_info "尝试手动生成密钥："
+        echo "  运行命令: $XRAY_BIN x25519"
+        return 1
+    fi
+
+    # 解析密钥
+    local private_key=$(echo "$keypair" | grep -i "Private key:" | awk '{print $3}')
+    local public_key=$(echo "$keypair" | grep -i "Public key:" | awk '{print $3}')
+
+    # 如果第一种格式失败，尝试其他格式
     if [[ -z "$private_key" || -z "$public_key" ]]; then
-        print_error "密钥生成失败，请检查 Xray 是否正确安装"
+        # 尝试 "Private:" 格式
+        private_key=$(echo "$keypair" | grep -i "Private:" | awk '{print $2}')
+        public_key=$(echo "$keypair" | grep -i "Public:" | awk '{print $2}')
+    fi
+
+    # 如果还是失败，直接按行解析
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        private_key=$(echo "$keypair" | sed -n '1p' | awk '{print $NF}')
+        public_key=$(echo "$keypair" | sed -n '2p' | awk '{print $NF}')
+    fi
+
+    # 最后检查
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        print_error "无法解析密钥对"
+        echo ""
+        print_info "原始输出："
+        echo "$keypair"
         return 1
     fi
 

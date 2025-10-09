@@ -463,6 +463,57 @@ jq . /usr/local/xray/config.json
 主菜单 -> 7 -> 4
 ```
 
+### 6. Reality 密钥生成失败
+
+**问题**：提示"密钥生成失败，请检查 Xray 是否正确安装"
+
+**原因**：
+- Xray 未安装或路径不正确
+- Xray 版本过低，不支持 x25519 命令
+- 执行权限问题
+
+**解决步骤**：
+
+1. **检查 Xray 是否已安装**
+   ```bash
+   ls -l /usr/local/xray/xray
+   /usr/local/xray/xray version
+   ```
+
+2. **安装或更新 Xray**
+   ```bash
+   # 通过脚本安装
+   主菜单 -> 1. 内核管理 -> 1. 安装 Xray
+
+   # 或更新到最新版本
+   主菜单 -> 1. 内核管理 -> 3. 更新 Xray
+   ```
+
+3. **测试 x25519 命令**
+   ```bash
+   /usr/local/xray/xray x25519
+
+   # 正常输出应该类似：
+   # Private key: xxx...
+   # Public key: xxx...
+   ```
+
+4. **检查执行权限**
+   ```bash
+   chmod +x /usr/local/xray/xray
+   ```
+
+5. **使用调试工具**
+
+   在脚本中可以调用测试函数：
+   ```bash
+   # 在节点管理模块中调用
+   test_reality_keygen
+   ```
+
+**最低版本要求**：
+- Xray-core 1.8.0+ (推荐使用最新版本)
+
 ## 安全建议
 
 ### 1. 定期更新
