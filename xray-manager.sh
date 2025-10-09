@@ -3,7 +3,12 @@
 #================================================================
 # Xray-Core 一键管理脚本
 # 支持功能：内核管理、节点管理、用户管理、订阅管理、状态监控、防火墙管理
+# 版本：v1.2.0
+# 优化：基于 s-hy2 最佳实践
 #================================================================
+
+# 严格模式
+set -uo pipefail
 
 # 颜色定义
 RED='\033[0;31m'
@@ -14,28 +19,18 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # 全局变量
-XRAY_DIR="/usr/local/xray"
-XRAY_BIN="${XRAY_DIR}/xray"
-XRAY_CONFIG="${XRAY_DIR}/config.json"
-XRAY_SERVICE="/etc/systemd/system/xray.service"
-DATA_DIR="${XRAY_DIR}/data"
-USERS_FILE="${DATA_DIR}/users.json"
-NODES_FILE="${DATA_DIR}/nodes.json"
-SUBSCRIPTION_DIR="${DATA_DIR}/subscriptions"
+readonly XRAY_DIR="/usr/local/xray"
+readonly XRAY_BIN="${XRAY_DIR}/xray"
+readonly XRAY_CONFIG="${XRAY_DIR}/config.json"
+readonly XRAY_SERVICE="/etc/systemd/system/xray.service"
+readonly DATA_DIR="${XRAY_DIR}/data"
+readonly USERS_FILE="${DATA_DIR}/users.json"
+readonly NODES_FILE="${DATA_DIR}/nodes.json"
+readonly SUBSCRIPTION_DIR="${DATA_DIR}/subscriptions"
 
-# 检查是否为 root 用户
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}错误：此脚本必须以 root 权限运行${NC}"
-        exit 1
-    fi
-}
-
-# 打印带颜色的消息
-print_info() { echo -e "${CYAN}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+# 日志配置
+export LOG_FILE="/var/log/xray-manager.log"
+export LOG_LEVEL=${LOG_LEVEL:-1}  # 默认 INFO 级别
 
 # 加载模块
 source_modules() {
@@ -51,18 +46,34 @@ source_modules() {
     local modules_dir="${script_dir}/modules"
 
     if [[ ! -d "$modules_dir" ]]; then
-        print_error "模块目录不存在: $modules_dir"
-        print_error "脚本路径: $script_path"
-        print_error "脚本目录: $script_dir"
+        echo -e "${RED}[ERROR]${NC} 模块目录不存在: $modules_dir"
+        echo -e "${RED}[ERROR]${NC} 脚本路径: $script_path"
+        echo -e "${RED}[ERROR]${NC} 脚本目录: $script_dir"
         exit 1
     fi
 
-    # 加载所有模块
+    # 优先加载公共库
+    if [[ -f "${modules_dir}/common.sh" ]]; then
+        source "${modules_dir}/common.sh"
+    else
+        echo -e "${RED}[ERROR]${NC} 公共库不存在: ${modules_dir}/common.sh"
+        exit 1
+    fi
+
+    # 加载输入验证模块
+    if [[ -f "${modules_dir}/input-validation.sh" ]]; then
+        source "${modules_dir}/input-validation.sh"
+    fi
+
+    # 加载其他模块
     for module in "${modules_dir}"/*.sh; do
-        if [[ -f "$module" ]]; then
+        if [[ -f "$module" ]] && [[ "$module" != */common.sh ]] && [[ "$module" != */input-validation.sh ]]; then
             source "$module"
+            log_debug "已加载模块: $(basename "$module")"
         fi
     done
+
+    log_info "所有模块加载完成"
 }
 
 # 初始化数据目录
@@ -321,9 +332,16 @@ menu_config() {
 
 # 主程序
 main() {
-    check_root
+    # 检查 root 权限
+    require_root
+
+    # 初始化数据目录
     init_data_dir
+
+    # 加载所有模块
     source_modules
+
+    log_info "Xray 管理脚本启动 (v1.2.0)"
 
     while true; do
         show_menu
@@ -348,26 +366,35 @@ main() {
                 echo ""
                 echo -e "${YELLOW}此操作将卸载 s-xray 管理脚本${NC}"
                 echo ""
-                read -p "确认卸载? [y/N]: " confirm
-                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+
+                if confirm "确认卸载" "n"; then
                     # 检查卸载脚本是否存在
-                    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                    local script_path="${BASH_SOURCE[0]}"
+                    if [[ -L "$script_path" ]]; then
+                        script_path="$(readlink -f "$script_path")"
+                    fi
+                    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+
                     if [[ -f "${script_dir}/uninstall.sh" ]]; then
+                        log_info "执行卸载脚本: ${script_dir}/uninstall.sh"
                         exec bash "${script_dir}/uninstall.sh"
                     elif [[ -f "/opt/s-xray/uninstall.sh" ]]; then
+                        log_info "执行卸载脚本: /opt/s-xray/uninstall.sh"
                         exec bash "/opt/s-xray/uninstall.sh"
                     else
-                        print_error "未找到卸载脚本"
-                        print_info "请手动运行: bash /opt/s-xray/uninstall.sh"
+                        log_error "未找到卸载脚本"
+                        log_info "请手动运行: bash /opt/s-xray/uninstall.sh"
                     fi
+                else
+                    log_info "已取消卸载"
                 fi
                 ;;
             0)
-                print_info "感谢使用 Xray 管理脚本！"
+                log_info "感谢使用 Xray 管理脚本！"
                 exit 0
                 ;;
             *)
-                print_error "无效选择，请重新输入"
+                log_error "无效选择，请重新输入"
                 sleep 1
                 ;;
         esac

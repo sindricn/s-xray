@@ -2,6 +2,8 @@
 
 基于 Xray-Core 的全功能一键搭建和管理脚本，支持多协议、多用户、订阅管理等企业级特性。
 
+> **版本：v1.2.0** | 基于 S-Hy2 最佳实践优化 | 增强的错误处理和日志系统
+
 ## 功能特性
 
 ### ✨ 核心功能
@@ -13,6 +15,8 @@
 - 📊 **状态监控**：实时监控、流量统计、连接状态、日志查看
 - 🔥 **防火墙管理**：自动识别防火墙类型、批量开放端口
 - ⚙️ **配置管理**：配置验证、备份恢复、导入导出
+- 🌐 **域名管理**：Reality 域名优选、自定义域名管理
+- 🔐 **证书管理**：自动生成、手动导入、证书验证
 
 ### 🎯 协议支持
 
@@ -596,11 +600,164 @@ rm -f /usr/local/bin/xray-manager
 systemctl daemon-reload
 ```
 
+## 代码质量优化
+
+### v1.2.0 架构改进
+
+基于 [S-Hy2](https://github.com/your-org/s-hy2) 项目最佳实践，本版本进行了全面的代码质量优化：
+
+#### 1. 统一公共库 (`modules/common.sh`)
+
+**日志系统**：
+- 分级日志：DEBUG/INFO/WARN/ERROR/FATAL
+- 彩色终端输出和文件持久化
+- 时间戳和进程 ID 标记
+- 日志文件：`/var/log/xray-manager.log`
+
+```bash
+# 使用示例
+log_info "安装 Xray 内核..."
+log_error "配置文件验证失败"
+log_warn "端口已被占用"
+```
+
+**错误处理**：
+- 统一错误退出函数
+- 信号捕获（ERR/INT/TERM）
+- 自动清理机制
+- 调用栈跟踪
+
+**工具函数**：
+- `require_command()` - 命令依赖检查
+- `require_root()` - 权限验证
+- `confirm()` - 用户确认
+- `get_public_ip()` - 获取公网 IP
+- `retry_with_backoff()` - 重试机制
+- `wait_for_condition()` - 条件等待
+
+#### 2. 输入验证框架 (`modules/input-validation.sh`)
+
+**基础验证**：
+- `validate_port()` - 端口验证（1-65535）
+- `validate_domain()` - 域名格式验证
+- `validate_email()` - 邮箱验证
+- `validate_uuid()` - UUID 格式验证
+- `validate_ip()` - IP 地址验证
+
+**协议验证**：
+- `validate_vless_config()` - VLESS 配置验证
+- `validate_vmess_config()` - VMess 配置验证
+- `validate_trojan_config()` - Trojan 配置验证
+- `validate_shadowsocks_config()` - Shadowsocks 配置验证
+- `validate_reality_config()` - Reality 配置完整性验证
+
+**安全增强**：
+- `sanitize_input()` - 输入清理（防注入）
+- `validate_path()` - 路径安全验证（防目录遍历）
+- `protect_production()` - 生产环境保护
+
+**交互式输入**：
+- `read_port()` - 端口输入（自动验证）
+- `read_uuid()` - UUID 输入（可自动生成）
+- `read_domain()` - 域名输入（可验证 DNS）
+- `read_password()` - 密码输入（强度检查）
+
+#### 3. 代码规范统一
+
+**严格模式**：
+```bash
+#!/bin/bash
+set -uo pipefail
+# -u: 使用未定义变量报错
+# -o pipefail: 管道任意命令失败返回失败
+# 不用 -e: 避免意外退出，保持错误处理可控
+```
+
+**变量命名规范**：
+```bash
+# 常量：readonly + 全大写
+readonly MAX_RETRY=3
+readonly CONFIG_DIR="/etc/xray"
+
+# 全局变量：大写
+XRAY_DIR="/usr/local/xray"
+
+# 局部变量：local + 小写
+local user_input=""
+```
+
+**引号规范**：
+```bash
+# ✅ 正确 - 始终使用引号
+echo "$variable"
+rm -rf "$directory"
+
+# ❌ 错误 - 缺少引号
+echo $variable
+rm -rf $directory
+```
+
+#### 4. 安全加固
+
+**临时文件安全**：
+```bash
+temp_file=$(mktemp)
+chmod 600 "$temp_file"
+trap "rm -f '$temp_file'" EXIT
+```
+
+**命令注入防护**：
+```bash
+# ❌ 危险
+eval "cat $user_input"
+
+# ✅ 安全
+cat "$user_input"
+```
+
+**密码管理**：
+- 日志中隐藏敏感信息
+- 使用安全随机生成器
+- 最小长度和复杂度要求
+
+#### 5. 性能优化
+
+**错误处理模式**：
+```bash
+# 早期返回模式
+function_with_validation() {
+    [[ ! -f "$file" ]] && {
+        log_error "文件不存在"
+        return 1
+    }
+    process_file "$file"
+}
+```
+
+**重试机制**：
+```bash
+# 指数退避重试
+retry_with_backoff 3 1 "curl -s example.com"
+```
+
 ## 更新日志
+
+### v1.2.0 (2025-10-09) - 代码质量大幅提升
+- 🎯 **架构优化**：基于 S-Hy2 最佳实践全面重构
+- 📝 **统一日志系统**：分级日志、文件持久化、调用栈跟踪
+- 🔒 **增强输入验证**：完整的验证框架，防注入保护
+- 🛡️ **安全加固**：临时文件安全、命令注入防护
+- 📐 **代码规范**：严格模式、统一命名、引号规范
+- ⚡ **错误处理**：信号捕获、自动清理、早期返回
+- 🔧 **工具函数**：重试机制、条件等待、IP 获取
+- 📊 **性能优化**：减少重复代码、优化执行流程
 
 ### v1.1.0 (2025-10-09)
 - ✅ **新增 Reality 支持**：三层架构（协议-传输-加密）
 - ✅ **一键搭建 VLESS + Reality 节点**：无需域名，自动生成密钥
+- ✅ **节点序号选择**：支持序号和端口两种方式
+- ✅ **域名管理**：Reality 域名优选、延迟测试
+- ✅ **证书管理**：自动生成、手动导入
 - ✅ 自动生成 Reality 分享链接
 - ✅ 优化节点菜单结构和用户体验
 - ✅ 修复软链接模块目录解析问题
