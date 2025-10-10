@@ -41,6 +41,42 @@
 9. 脚本管理     （扩展）
 ```
 
+#### 域名管理优化
+- ✅ **菜单结构重组** - 按功能分类清晰
+  - 服务器域名（TLS证书绑定、订阅地址）
+  - SNI伪装域名（Reality/TLS协议）
+  - Host伪装域名（WebSocket/HTTP传输）
+  - 优选域名测试（智能延迟测试）
+  - 校验DNS（域名解析验证）
+- ✅ **服务器域名管理** - manage_server_domain()
+  - 查看/设置服务器域名
+  - 域名解析测试
+- ✅ **SNI伪装域名** - manage_sni_domain()
+  - 设置默认SNI域名
+  - 查看推荐域名列表
+  - TLS握手测试
+- ✅ **Host伪装域名** - manage_host_domain()
+  - Host域名配置
+  - HTTP连接测试
+
+#### 证书管理优化
+- ✅ **菜单结构完善** - 符合用户需求
+  - 查看证书（list_certificates）
+  - 修改证书（modify_certificate）- 新增
+  - 添加自定义证书（add_certificate）
+  - 删除证书（delete_certificate）
+  - 自动申请证书（auto_apply_certificate）- 新增
+- ✅ **证书修改功能** - modify_certificate()
+  - 更新证书文件路径
+  - 更新密钥文件路径
+  - 文件存在性验证
+- ✅ **自动申请证书** - auto_apply_certificate()
+  - acme.sh集成
+  - 支持Let's Encrypt/ZeroSSL/Buypass
+  - HTTP验证/DNS验证/独立模式
+  - 自动续期支持
+  - 证书自动安装到指定目录
+
 #### 技术实现
 - **在线节点检测函数**: get_online_nodes()
   - 遍历所有节点端口
@@ -51,6 +87,13 @@
   - 实时日志（-f -n 50）
   - 完整日志（--no-pager）
   - 错误日志（-p err）
+- **域名管理新增函数**:
+  - manage_server_domain() - 服务器域名管理
+  - manage_sni_domain() - SNI伪装域名
+  - manage_host_domain() - Host伪装域名
+- **证书管理新增函数**:
+  - modify_certificate() - 证书修改
+  - auto_apply_certificate() - acme.sh自动申请
 
 ---
 

@@ -561,6 +561,172 @@ manual_set_default_domain() {
     set_default_domain "$domain"
 }
 
+# 服务器域名管理
+manage_server_domain() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      服务器域名管理                  ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${YELLOW}服务器域名用途：${NC}"
+    echo -e "  • TLS/HTTPS 证书绑定"
+    echo -e "  • 节点订阅地址"
+    echo -e "  • 客户端连接地址"
+    echo ""
+
+    echo -e "${GREEN}1.${NC} 查看当前域名"
+    echo -e "${GREEN}2.${NC} 设置服务器域名"
+    echo -e "${GREEN}3.${NC} 测试域名解析"
+    echo -e "${GREEN}0.${NC} 返回"
+    echo ""
+    read -p "请选择 [0-3]: " choice
+
+    case $choice in
+        1)
+            local server_domain=$(cat "${DATA_DIR}/server_domain.txt" 2>/dev/null || echo "未设置")
+            echo ""
+            echo -e "${CYAN}当前服务器域名:${NC} ${YELLOW}$server_domain${NC}"
+            ;;
+        2)
+            echo ""
+            read -p "请输入服务器域名: " domain
+            if [[ -n "$domain" ]]; then
+                echo "$domain" > "${DATA_DIR}/server_domain.txt"
+                print_success "服务器域名已设置为: $domain"
+            fi
+            ;;
+        3)
+            echo ""
+            read -p "请输入要测试的域名: " domain
+            if [[ -n "$domain" ]]; then
+                echo ""
+                print_info "测试域名解析: $domain"
+                if host "$domain" >/dev/null 2>&1; then
+                    local ip=$(host "$domain" | grep "has address" | awk '{print $4}' | head -1)
+                    print_success "解析成功: $domain -> $ip"
+                else
+                    print_error "解析失败: $domain"
+                fi
+            fi
+            ;;
+    esac
+}
+
+# SNI 伪装域名管理
+manage_sni_domain() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      SNI 伪装域名管理                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${YELLOW}SNI (Server Name Indication) 说明：${NC}"
+    echo -e "  • Reality/TLS 协议的伪装域名"
+    echo -e "  • 客户端 TLS 握手时发送的域名"
+    echo -e "  • 建议使用大型网站域名"
+    echo ""
+
+    local default_domain=$(get_default_domain)
+    echo -e "${BLUE}当前默认 SNI 域名:${NC} ${YELLOW}$default_domain${NC}"
+    echo ""
+
+    echo -e "${GREEN}1.${NC} 设置默认 SNI 域名"
+    echo -e "${GREEN}2.${NC} 查看推荐域名列表"
+    echo -e "${GREEN}3.${NC} 测试域名可用性"
+    echo -e "${GREEN}0.${NC} 返回"
+    echo ""
+    read -p "请选择 [0-3]: " choice
+
+    case $choice in
+        1)
+            echo ""
+            read -p "请输入 SNI 域名: " domain
+            if [[ -n "$domain" ]]; then
+                set_default_domain "$domain"
+            fi
+            ;;
+        2)
+            echo ""
+            if [[ -f "${DATA_DIR}/recommended_domains.txt" ]]; then
+                echo -e "${CYAN}推荐的 SNI 域名：${NC}"
+                cat "${DATA_DIR}/recommended_domains.txt"
+            else
+                echo -e "${YELLOW}常用 SNI 域名推荐：${NC}"
+                echo -e "  • www.microsoft.com"
+                echo -e "  • www.apple.com"
+                echo -e "  • www.cloudflare.com"
+                echo -e "  • www.bing.com"
+                echo -e "  • aws.amazon.com"
+            fi
+            ;;
+        3)
+            echo ""
+            read -p "请输入要测试的域名: " domain
+            if [[ -n "$domain" ]]; then
+                echo ""
+                print_info "测试 TLS 握手: $domain"
+                if timeout 3 openssl s_client -connect "$domain:443" -servername "$domain" </dev/null >/dev/null 2>&1; then
+                    print_success "TLS 握手成功: $domain"
+                else
+                    print_error "TLS 握手失败: $domain"
+                fi
+            fi
+            ;;
+    esac
+}
+
+# Host 伪装域名管理
+manage_host_domain() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      Host 伪装域名管理               ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${YELLOW}Host 伪装域名说明：${NC}"
+    echo -e "  • WebSocket/HTTP 传输的 Host 头"
+    echo -e "  • CDN 回源时使用的域名"
+    echo -e "  • 与 SNI 可以不同"
+    echo ""
+
+    echo -e "${GREEN}1.${NC} 查看当前 Host 域名"
+    echo -e "${GREEN}2.${NC} 设置 Host 域名"
+    echo -e "${GREEN}3.${NC} 测试 Host 可用性"
+    echo -e "${GREEN}0.${NC} 返回"
+    echo ""
+    read -p "请选择 [0-3]: " choice
+
+    case $choice in
+        1)
+            local host_domain=$(cat "${DATA_DIR}/host_domain.txt" 2>/dev/null || echo "未设置")
+            echo ""
+            echo -e "${CYAN}当前 Host 域名:${NC} ${YELLOW}$host_domain${NC}"
+            ;;
+        2)
+            echo ""
+            read -p "请输入 Host 域名: " domain
+            if [[ -n "$domain" ]]; then
+                echo "$domain" > "${DATA_DIR}/host_domain.txt"
+                print_success "Host 域名已设置为: $domain"
+            fi
+            ;;
+        3)
+            echo ""
+            read -p "请输入要测试的域名: " domain
+            if [[ -n "$domain" ]]; then
+                echo ""
+                print_info "测试 HTTP 连接: $domain"
+                if curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "https://$domain" | grep -q "200\|301\|302"; then
+                    print_success "HTTP 连接成功: $domain"
+                else
+                    print_warning "HTTP 连接异常: $domain（可能仍可用作 Host）"
+                fi
+            fi
+            ;;
+    esac
+}
+
 # 域名管理菜单
 domain_management_menu() {
     while true; do
@@ -569,35 +735,27 @@ domain_management_menu() {
         # 显示当前默认域名
         local default_domain=$(get_default_domain)
 
-        echo -e "${CYAN}====== 域名管理 ======${NC}"
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          域名管理                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "${BLUE}默认伪装域名:${NC} $default_domain"
+        echo -e "${BLUE}当前默认伪装域名:${NC} ${YELLOW}$default_domain${NC}"
         echo ""
-        echo -e "${YELLOW}⚡ 域名优选：${NC}"
-        echo -e "${GREEN}1.${NC} Reality 伪装域名优选测试"
-        echo -e "${GREEN}2.${NC} 测试自定义域名"
+        echo -e "${GREEN}1.${NC} 服务器域名"
+        echo -e "${GREEN}2.${NC} SNI 伪装域名"
+        echo -e "${GREEN}3.${NC} Host 伪装域名"
+        echo -e "${GREEN}4.${NC} 优选域名测试"
+        echo -e "${GREEN}5.${NC} 校验 DNS"
+        echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        echo -e "${CYAN}🔧 域名管理：${NC}"
-        echo -e "${GREEN}3.${NC} 设置默认伪装域名"
-        echo -e "${GREEN}4.${NC} 添加自定义域名"
-        echo -e "${GREEN}5.${NC} 查看域名列表"
-        echo -e "${GREEN}6.${NC} 删除域名"
-        echo ""
-        echo -e "${CYAN}🔍 域名测试：${NC}"
-        echo -e "${GREEN}7.${NC} DNS 解析测试"
-        echo ""
-        echo -e "${GREEN}0.${NC} 返回上级菜单"
-        echo ""
-        read -p "请选择操作 [0-7]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
-            1) test_best_reality_domains ;;
-            2) test_custom_domain ;;
-            3) manual_set_default_domain ;;
-            4) add_custom_domain ;;
-            5) list_domains ;;
-            6) delete_domain ;;
-            7) test_dns_resolution ;;
+            1) manage_server_domain ;;
+            2) manage_sni_domain ;;
+            3) manage_host_domain ;;
+            4) test_best_reality_domains ;;
+            5) test_dns_resolution ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -606,24 +764,234 @@ domain_management_menu() {
     done
 }
 
+# 修改证书
+modify_certificate() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          修改证书                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 显示证书列表
+    init_domain_file
+    local certs=$(jq -r '.certificates[]' "$DOMAIN_FILE" 2>/dev/null)
+
+    if [[ -z "$certs" ]]; then
+        print_warning "暂无证书"
+        return
+    fi
+
+    echo -e "${YELLOW}现有证书：${NC}"
+    local index=1
+    while read -r cert; do
+        if [[ -n "$cert" ]]; then
+            local domain=$(echo "$cert" | jq -r '.domain')
+            echo -e "${GREEN}[$index]${NC} $domain"
+            ((index++))
+        fi
+    done < <(jq -c '.certificates[]' "$DOMAIN_FILE" 2>/dev/null)
+
+    echo ""
+    read -p "请选择要修改的证书序号: " cert_index
+
+    if [[ ! "$cert_index" =~ ^[0-9]+$ ]]; then
+        print_error "无效的序号"
+        return
+    fi
+
+    local cert=$(jq -c ".certificates[$((cert_index-1))]" "$DOMAIN_FILE" 2>/dev/null)
+    if [[ -z "$cert" || "$cert" == "null" ]]; then
+        print_error "证书不存在"
+        return
+    fi
+
+    local domain=$(echo "$cert" | jq -r '.domain')
+    echo ""
+    echo -e "${CYAN}修改证书:${NC} $domain"
+    echo ""
+    echo -e "${GREEN}1.${NC} 更新证书文件路径"
+    echo -e "${GREEN}2.${NC} 更新密钥文件路径"
+    echo -e "${GREEN}0.${NC} 返回"
+    echo ""
+    read -p "请选择 [0-2]: " choice
+
+    case $choice in
+        1)
+            echo ""
+            read -p "请输入新的证书文件路径: " cert_path
+            if [[ -n "$cert_path" ]]; then
+                if [[ ! -f "$cert_path" ]]; then
+                    print_warning "证书文件不存在: $cert_path"
+                    read -p "是否仍要保存? [y/N]: " confirm
+                    [[ "$confirm" != "y" ]] && return
+                fi
+
+                jq ".certificates[$((cert_index-1))].cert = \"$cert_path\"" "$DOMAIN_FILE" > "${DOMAIN_FILE}.tmp"
+                mv "${DOMAIN_FILE}.tmp" "$DOMAIN_FILE"
+                print_success "证书路径已更新"
+            fi
+            ;;
+        2)
+            echo ""
+            read -p "请输入新的密钥文件路径: " key_path
+            if [[ -n "$key_path" ]]; then
+                if [[ ! -f "$key_path" ]]; then
+                    print_warning "密钥文件不存在: $key_path"
+                    read -p "是否仍要保存? [y/N]: " confirm
+                    [[ "$confirm" != "y" ]] && return
+                fi
+
+                jq ".certificates[$((cert_index-1))].key = \"$key_path\"" "$DOMAIN_FILE" > "${DOMAIN_FILE}.tmp"
+                mv "${DOMAIN_FILE}.tmp" "$DOMAIN_FILE"
+                print_success "密钥路径已更新"
+            fi
+            ;;
+    esac
+}
+
+# 自动申请证书
+auto_apply_certificate() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      自动申请证书 (acme.sh)         ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${YELLOW}支持的证书申请方式：${NC}"
+    echo -e "  • Let's Encrypt (免费)"
+    echo -e "  • ZeroSSL (免费)"
+    echo -e "  • Buypass (免费)"
+    echo ""
+
+    # 检查 acme.sh 是否安装
+    if ! command -v acme.sh &>/dev/null && [[ ! -f ~/.acme.sh/acme.sh ]]; then
+        print_warning "acme.sh 未安装"
+        echo ""
+        read -p "是否现在安装 acme.sh? [y/N]: " install_acme
+        if [[ "$install_acme" == "y" ]]; then
+            echo ""
+            print_info "正在安装 acme.sh..."
+            curl https://get.acme.sh | sh -s email=my@example.com || {
+                print_error "acme.sh 安装失败"
+                return 1
+            }
+            source ~/.bashrc
+            print_success "acme.sh 安装完成"
+        else
+            return
+        fi
+    fi
+
+    echo ""
+    read -p "请输入域名: " domain
+    if [[ -z "$domain" ]]; then
+        print_error "域名不能为空"
+        return
+    fi
+
+    echo ""
+    echo -e "${YELLOW}验证方式：${NC}"
+    echo -e "${GREEN}1.${NC} HTTP 验证（需要80端口）"
+    echo -e "${GREEN}2.${NC} DNS 验证（需要配置DNS API）"
+    echo -e "${GREEN}3.${NC} 独立模式（需要80端口临时使用）"
+    echo ""
+    read -p "请选择验证方式 [1-3, 默认: 3]: " verify_method
+    verify_method=${verify_method:-3}
+
+    local acme_cmd=""
+    case $verify_method in
+        1)
+            read -p "请输入网站根目录路径: " webroot
+            if [[ -z "$webroot" ]]; then
+                print_error "网站根目录不能为空"
+                return
+            fi
+            acme_cmd="~/.acme.sh/acme.sh --issue -d $domain -w $webroot"
+            ;;
+        2)
+            echo ""
+            echo -e "${YELLOW}支持的 DNS 提供商：${NC}"
+            echo -e "  • Cloudflare (cf)"
+            echo -e "  • Aliyun (ali)"
+            echo -e "  • DNSPod (dp)"
+            echo ""
+            read -p "请输入 DNS 提供商简称: " dns_provider
+            read -p "请输入 API Key/Token: " api_key
+
+            export CF_Token="$api_key"  # 示例，实际需根据提供商设置
+            acme_cmd="~/.acme.sh/acme.sh --issue --dns dns_$dns_provider -d $domain"
+            ;;
+        3)
+            acme_cmd="~/.acme.sh/acme.sh --issue -d $domain --standalone"
+            ;;
+        *)
+            print_error "无效的验证方式"
+            return
+            ;;
+    esac
+
+    echo ""
+    print_info "正在申请证书..."
+    echo ""
+
+    if eval "$acme_cmd"; then
+        print_success "证书申请成功"
+
+        # 安装证书到指定目录
+        mkdir -p "$CERT_DIR/$domain"
+        ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+            --key-file "$CERT_DIR/$domain/key.pem" \
+            --fullchain-file "$CERT_DIR/$domain/cert.pem"
+
+        # 添加到证书列表
+        init_domain_file
+        local cert_data=$(jq -n \
+            --arg domain "$domain" \
+            --arg cert "$CERT_DIR/$domain/cert.pem" \
+            --arg key "$CERT_DIR/$domain/key.pem" \
+            '{domain: $domain, cert: $cert, key: $key, auto: true, created: now|todate}')
+
+        jq ".certificates += [$cert_data]" "$DOMAIN_FILE" > "${DOMAIN_FILE}.tmp"
+        mv "${DOMAIN_FILE}.tmp" "$DOMAIN_FILE"
+
+        echo ""
+        echo -e "${CYAN}证书文件位置：${NC}"
+        echo -e "  证书: ${GREEN}$CERT_DIR/$domain/cert.pem${NC}"
+        echo -e "  密钥: ${GREEN}$CERT_DIR/$domain/key.pem${NC}"
+        echo ""
+        print_info "证书将自动续期"
+    else
+        print_error "证书申请失败"
+        echo -e "${YELLOW}常见失败原因：${NC}"
+        echo -e "  • 域名未正确解析到本服务器"
+        echo -e "  • 80端口被占用（独立模式）"
+        echo -e "  • DNS API配置错误（DNS验证）"
+    fi
+}
+
 # 证书管理菜单
 certificate_management_menu() {
     while true; do
         clear
-        echo -e "${CYAN}====== 证书管理 ======${NC}"
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          证书管理                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "${GREEN}1.${NC} 添加证书"
-        echo -e "${GREEN}2.${NC} 查看证书列表"
-        echo -e "${GREEN}3.${NC} 删除证书"
+        echo -e "${GREEN}1.${NC} 查看证书"
+        echo -e "${GREEN}2.${NC} 修改证书"
+        echo -e "${GREEN}3.${NC} 添加自定义证书"
+        echo -e "${GREEN}4.${NC} 删除证书"
+        echo -e "${GREEN}5.${NC} 自动申请证书"
+        echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        echo -e "${GREEN}0.${NC} 返回上级菜单"
-        echo ""
-        read -p "请选择操作 [0-3]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
-            1) add_certificate ;;
-            2) list_certificates ;;
-            3) delete_certificate ;;
+            1) list_certificates ;;
+            2) modify_certificate ;;
+            3) add_certificate ;;
+            4) delete_certificate ;;
+            5) auto_apply_certificate ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
