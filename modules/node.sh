@@ -118,12 +118,163 @@ quick_add_vless_reality() {
     # Reality 配置
     echo ""
     echo -e "${CYAN}Reality 配置：${NC}"
+    echo ""
 
-    read -p "请输入目标网站 (SNI) [默认: www.microsoft.com]: " dest_server
-    dest_server=${dest_server:-www.microsoft.com}
+    # 询问是否自动优选域名
+    echo -e "${YELLOW}伪装域名 (SNI) 设置：${NC}"
+    echo -e "  1. 使用默认伪装域名 ($(get_default_domain))"
+    echo -e "  2. 自动优选最佳域名（智能延迟测试）"
+    echo -e "  3. 手动输入域名"
+    echo ""
+    read -p "请选择 [1-3，默认: 2]: " domain_choice
+    domain_choice=${domain_choice:-2}
 
-    read -p "请输入伪装域名 [默认: $dest_server]: " server_names
-    server_names=${server_names:-$dest_server}
+    local dest_server=""
+    local server_names=""
+
+    case $domain_choice in
+        1)
+            # 使用默认域名
+            dest_server=$(get_default_domain)
+            server_names=$dest_server
+            print_info "使用默认伪装域名: $dest_server"
+            ;;
+        2)
+            # 自动优选域名
+            echo ""
+            print_info "开始智能优选伪装域名..."
+            echo ""
+
+            # 测试域名列表（精简版，前15个常用域名）
+            local test_domains=(
+                www.cloudflare.com
+                www.apple.com
+                www.microsoft.com
+                www.bing.com
+                aws.amazon.com
+                cdn.jsdelivr.net
+                www.intel.com
+                www.sony.com
+                ajax.cloudflare.com
+                www.mozilla.org
+                www.gstatic.com
+                fonts.googleapis.com
+                developer.apple.com
+                www.w3.org
+                www.wikipedia.org
+            )
+
+            local temp_file=$(mktemp)
+            local best_latency=9999
+            local best_domain=""
+            local success_count=0
+
+            echo -e "${BLUE}正在测试域名延迟...${NC}"
+            echo ""
+
+            for domain in "${test_domains[@]}"; do
+                local t1=$(date +%s%3N)
+                if timeout 2 openssl s_client -connect "$domain:443" -servername "$domain" </dev/null &>/dev/null 2>&1; then
+                    local t2=$(date +%s%3N)
+                    local latency=$((t2 - t1))
+
+                    if host "$domain" &>/dev/null 2>&1; then
+                        echo "$latency $domain" >> "$temp_file"
+                        ((success_count++))
+
+                        if [[ $latency -lt $best_latency ]]; then
+                            best_latency=$latency
+                            best_domain=$domain
+                        fi
+
+                        # 实时显示测试结果
+                        printf "  ${GREEN}✔${NC} %-35s ${CYAN}%4d ms${NC}\n" "$domain" "$latency"
+                    fi
+                else
+                    printf "  ${RED}✘${NC} %-35s ${YELLOW}超时${NC}\n" "$domain"
+                fi
+            done
+            echo ""
+
+            if [[ -n "$best_domain" && $success_count -gt 0 ]]; then
+                dest_server=$best_domain
+                server_names=$best_domain
+
+                echo -e "${GREEN}=====================================${NC}"
+                print_success "优选完成！"
+                echo -e "  最佳域名: ${CYAN}$dest_server${NC}"
+                echo -e "  延迟: ${CYAN}${best_latency}ms${NC}"
+                echo -e "  成功测试: ${CYAN}${success_count}/${#test_domains[@]}${NC} 个域名"
+                echo -e "${GREEN}=====================================${NC}"
+                echo ""
+
+                # 显示前5个最佳域名供参考
+                echo -e "${BLUE}延迟最低的前 5 个域名:${NC}"
+                sort -n "$temp_file" | head -n 5 | while read -r lat dom; do
+                    printf "  ${CYAN}%-35s${NC} %4d ms\n" "$dom" "$lat"
+                done
+                echo ""
+
+                # 询问是否更改选择
+                read -p "是否使用其他域名? [y/N]: " change_domain
+                if [[ "$change_domain" == "y" || "$change_domain" == "Y" ]]; then
+                    read -p "请输入域名: " custom_domain
+                    if [[ -n "$custom_domain" ]]; then
+                        dest_server=$custom_domain
+                        server_names=$custom_domain
+                        print_info "已更改为: $dest_server"
+                    fi
+                fi
+
+                echo ""
+                # 询问是否设置为默认
+                read -p "是否将 $dest_server 设置为默认伪装域名? [Y/n]: " set_default
+                if [[ "$set_default" != "n" && "$set_default" != "N" ]]; then
+                    set_default_domain "$dest_server"
+                fi
+            else
+                print_warning "自动优选失败，使用默认域名"
+                dest_server=$(get_default_domain)
+                server_names=$dest_server
+            fi
+
+            rm -f "$temp_file"
+            ;;
+        3)
+            # 手动输入
+            echo ""
+            read -p "请输入伪装域名 (SNI): " dest_server
+            while [[ -z "$dest_server" ]]; do
+                print_error "域名不能为空"
+                read -p "请输入伪装域名 (SNI): " dest_server
+            done
+
+            # 测试输入的域名
+            print_info "测试域名连接性..."
+            if timeout 3 openssl s_client -connect "$dest_server:443" -servername "$dest_server" </dev/null &>/dev/null 2>&1; then
+                print_success "域名测试通过"
+            else
+                print_warning "域名测试失败，但仍可继续使用"
+            fi
+
+            server_names=$dest_server
+            ;;
+        *)
+            # 默认使用自动优选
+            print_info "使用自动优选模式..."
+            domain_choice=2
+            # 递归调用自己，直接跳到自动优选逻辑
+            dest_server=$(get_default_domain)
+            server_names=$dest_server
+            ;;
+    esac
+
+    # 确认最终配置
+    echo ""
+    echo -e "${CYAN}最终 Reality 配置：${NC}"
+    echo -e "  伪装目标 (dest): ${YELLOW}$dest_server:443${NC}"
+    echo -e "  伪装域名 (SNI): ${YELLOW}$server_names${NC}"
+    echo ""
 
     # 生成 Reality 密钥对
     print_info "生成 Reality 密钥对..."

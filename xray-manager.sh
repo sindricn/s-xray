@@ -92,27 +92,75 @@ init_data_dir() {
     fi
 }
 
+# 获取 Xray 状态信息
+get_xray_status() {
+    local version="未安装"
+    local status="${RED}未运行${NC}"
+
+    if [[ -f "$XRAY_BIN" ]]; then
+        version=$("$XRAY_BIN" version 2>/dev/null | head -1 | awk '{print $2}')
+        [[ -z "$version" ]] && version="unknown"
+
+        if systemctl is-active xray &>/dev/null; then
+            status="${GREEN}运行中${NC}"
+        else
+            status="${RED}已停止${NC}"
+        fi
+    fi
+
+    echo "$version|$status"
+}
+
 # 主菜单
 show_menu() {
     clear
-    echo -e "${CYAN}=====================================${NC}"
-    echo -e "${CYAN}    Xray-Core 一键管理脚本${NC}"
-    echo -e "${CYAN}=====================================${NC}"
+
+    # 获取状态信息
+    local status_info=$(get_xray_status)
+    local version=$(echo "$status_info" | cut -d'|' -f1)
+    local status=$(echo "$status_info" | cut -d'|' -f2)
+
+    # 获取节点数量
+    local node_count=0
+    if [[ -f "$NODES_FILE" ]]; then
+        node_count=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "0")
+    fi
+
+    # 获取用户数量
+    local user_count=0
+    if [[ -f "$USERS_FILE" ]]; then
+        user_count=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
+    fi
+
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.0    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${GREEN}1.${NC}  内核管理"
-    echo -e "${GREEN}2.${NC}  节点管理"
-    echo -e "${GREEN}3.${NC}  用户管理"
-    echo -e "${GREEN}4.${NC}  订阅管理"
-    echo -e "${GREEN}5.${NC}  状态监控"
-    echo -e "${GREEN}6.${NC}  防火墙管理"
-    echo -e "${GREEN}7.${NC}  配置管理"
-    echo -e "${GREEN}8.${NC}  域名管理"
-    echo -e "${GREEN}9.${NC}  证书管理"
+    echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}│${NC}  系统状态                           ${CYAN}│${NC}"
+    echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
+    echo -e "${CYAN}│${NC}  内核版本: ${YELLOW}%-23s${CYAN}│${NC}" "$version"
+    echo -e "${CYAN}│${NC}  运行状态: $status                      ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  节点数量: ${BLUE}%-23d${CYAN}│${NC}" "$node_count"
+    echo -e "${CYAN}│${NC}  用户数量: ${BLUE}%-23d${CYAN}│${NC}" "$user_count"
+    echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
-    echo -e "${RED}99.${NC} 卸载脚本"
-    echo -e "${GREEN}0.${NC}  退出脚本"
+    echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}│${NC}  功能菜单                           ${CYAN}│${NC}"
+    echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}1.${NC}  内核管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}2.${NC}  节点管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}3.${NC}  用户管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}4.${NC}  订阅管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}5.${NC}  防火墙管理                     ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}6.${NC}  配置管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}7.${NC}  域名管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}8.${NC}  证书管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
+    echo -e "${CYAN}│${NC}  ${RED}99.${NC} 卸载脚本                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}0.${NC}  退出脚本                       ${CYAN}│${NC}"
+    echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
-    echo -e "${CYAN}=====================================${NC}"
 }
 
 # 内核管理菜单
@@ -352,11 +400,10 @@ main() {
             2) menu_node ;;
             3) menu_user ;;
             4) menu_subscription ;;
-            5) menu_monitor ;;
-            6) menu_firewall ;;
-            7) menu_config ;;
-            8) domain_management_menu ;;
-            9) certificate_management_menu ;;
+            5) menu_firewall ;;
+            6) menu_config ;;
+            7) domain_management_menu ;;
+            8) certificate_management_menu ;;
             99)
                 # 卸载脚本
                 clear
