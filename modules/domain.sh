@@ -92,12 +92,12 @@ test_best_reality_domains() {
         local t1=$(date +%s%3N)
 
         # 测试连接（超时2秒）
-        if timeout 2 openssl s_client -connect "$domain:443" -servername "$domain" </dev/null &>/dev/null 2>&1; then
+        if timeout 2 openssl s_client -connect "$domain:443" -servername "$domain" </dev/null >/dev/null 2>&1; then
             local t2=$(date +%s%3N)
             local latency=$((t2 - t1))
 
-            # 验证 DNS 解析
-            if host "$domain" &>/dev/null 2>&1; then
+            # 验证 DNS 解析（静默模式）
+            if host "$domain" >/dev/null 2>&1; then
                 echo "$latency $domain" >> "$temp_file"
                 ((success_count++))
 
