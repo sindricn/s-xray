@@ -111,6 +111,39 @@ get_xray_status() {
     echo "$version|$status"
 }
 
+# 获取在线节点数量
+get_online_nodes() {
+    local online=0
+
+    if [[ ! -f "$NODES_FILE" ]]; then
+        echo "0"
+        return
+    fi
+
+    # 检查每个节点的端口是否在监听
+    while IFS= read -r node; do
+        if [[ -z "$node" || "$node" == "null" ]]; then
+            continue
+        fi
+
+        local port=$(echo "$node" | jq -r '.port // empty' 2>/dev/null)
+        if [[ -n "$port" ]]; then
+            # 检查端口是否在监听（支持ss或netstat）
+            if command -v ss &>/dev/null; then
+                if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+                    ((online++))
+                fi
+            elif command -v netstat &>/dev/null; then
+                if netstat -tlnp 2>/dev/null | grep -q ":$port "; then
+                    ((online++))
+                fi
+            fi
+        fi
+    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+
+    echo "$online"
+}
+
 # 主菜单
 show_menu() {
     clear
@@ -132,8 +165,11 @@ show_menu() {
         user_count=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
     fi
 
+    # 获取在线节点数量
+    local online_count=$(get_online_nodes)
+
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.1    ║${NC}"
+    echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.2    ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
@@ -141,52 +177,92 @@ show_menu() {
     echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
     echo -e "${CYAN}│${NC}  内核版本: ${YELLOW}${version}${NC}"
     echo -e "${CYAN}│${NC}  运行状态: ${status}"
-    echo -e "${CYAN}│${NC}  节点数量: ${BLUE}${node_count}${NC}"
     echo -e "${CYAN}│${NC}  用户数量: ${BLUE}${user_count}${NC}"
+    echo -e "${CYAN}│${NC}  节点总数: ${BLUE}${node_count}${NC}"
+    echo -e "${CYAN}│${NC}  在线节点: ${GREEN}${online_count}${NC}/${BLUE}${node_count}${NC}"
     echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
     echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
     echo -e "${CYAN}│${NC}  ${YELLOW}功能菜单${NC}                           ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}1.${NC}  内核管理                       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}2.${NC}  节点管理                       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}3.${NC}  用户管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}1.${NC}  Xray 管理                      ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}2.${NC}  用户管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}3.${NC}  节点管理                       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}4.${NC}  订阅管理                       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}5.${NC}  防火墙管理                     ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}6.${NC}  配置管理                       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}7.${NC}  域名管理                       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  ${GREEN}8.${NC}  证书管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}5.${NC}  域名管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}6.${NC}  证书管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}7.${NC}  出站规则                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}8.${NC}  防火墙管理                     ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}│${NC}  ${RED}9.${NC}  卸载脚本                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}9.${NC}  脚本管理                       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}0.${NC}  退出脚本                       ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
 }
 
-# 内核管理菜单
+# Xray管理菜单
 menu_core() {
     while true; do
         clear
-        echo -e "${CYAN}====== 内核管理 ======${NC}"
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          Xray 管理                   ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
         echo -e "${GREEN}1.${NC} 安装 Xray"
-        echo -e "${GREEN}2.${NC} 卸载 Xray"
-        echo -e "${GREEN}3.${NC} 更新 Xray"
-        echo -e "${GREEN}4.${NC} 启动 Xray"
-        echo -e "${GREEN}5.${NC} 停止 Xray"
-        echo -e "${GREEN}6.${NC} 重启 Xray"
-        echo -e "${GREEN}7.${NC} 查看版本"
+        echo -e "${GREEN}2.${NC} 启动 Xray"
+        echo -e "${GREEN}3.${NC} 停止 Xray"
+        echo -e "${GREEN}4.${NC} 重启 Xray"
+        echo -e "${GREEN}5.${NC} 卸载 Xray"
+        echo -e "${GREEN}6.${NC} 更新 Xray"
+        echo -e "${GREEN}7.${NC} 查看日志"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
         read -p "请选择操作 [0-7]: " choice
 
         case $choice in
             1) install_xray ;;
-            2) uninstall_xray ;;
-            3) update_xray ;;
-            4) start_xray ;;
-            5) stop_xray ;;
-            6) restart_xray ;;
-            7) show_version ;;
+            2) start_xray ;;
+            3) stop_xray ;;
+            4) restart_xray ;;
+            5) uninstall_xray ;;
+            6) update_xray ;;
+            7)
+                # 查看日志
+                clear
+                echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+                echo -e "${CYAN}║          Xray 日志                   ║${NC}"
+                echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+                echo ""
+                echo -e "${GREEN}1.${NC} 实时日志（最新50行）"
+                echo -e "${GREEN}2.${NC} 完整日志"
+                echo -e "${GREEN}3.${NC} 错误日志"
+                echo -e "${GREEN}0.${NC} 返回"
+                echo ""
+                read -p "请选择 [0-3]: " log_choice
+
+                case $log_choice in
+                    1)
+                        echo ""
+                        echo -e "${CYAN}实时日志（Ctrl+C退出）:${NC}"
+                        echo ""
+                        journalctl -u xray -f -n 50
+                        ;;
+                    2)
+                        echo ""
+                        echo -e "${CYAN}完整日志:${NC}"
+                        echo ""
+                        journalctl -u xray --no-pager | less
+                        ;;
+                    3)
+                        echo ""
+                        echo -e "${CYAN}错误日志:${NC}"
+                        echo ""
+                        journalctl -u xray -p err --no-pager | less
+                        ;;
+                    0) ;;
+                    *) print_error "无效选择" ;;
+                esac
+                ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -268,22 +344,48 @@ menu_user() {
 menu_subscription() {
     while true; do
         clear
-        echo -e "${CYAN}====== 订阅管理 ======${NC}"
-        echo -e "${GREEN}1.${NC} 生成订阅链接"
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          订阅管理                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 查看节点链接"
         echo -e "${GREEN}2.${NC} 查看订阅链接"
-        echo -e "${GREEN}3.${NC} 更新订阅内容"
+        echo -e "${GREEN}3.${NC} 更新订阅"
         echo -e "${GREEN}4.${NC} 删除订阅"
-        echo -e "${GREEN}5.${NC} 订阅配置"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-5]: " choice
+        read -p "请选择操作 [0-4]: " choice
 
         case $choice in
-            1) generate_subscription ;;
-            2) show_subscription ;;
-            3) update_subscription ;;
+            1) show_node_share_link ;;  # 查看单个节点链接
+            2) show_subscription ;;      # 查看所有订阅链接
+            3)
+                # 更新订阅（重新生成）
+                echo ""
+                echo -e "${YELLOW}更新订阅选项：${NC}"
+                echo -e "${GREEN}1.${NC} 生成新订阅"
+                echo -e "${GREEN}2.${NC} 重新生成现有订阅"
+                echo -e "${GREEN}0.${NC} 返回"
+                echo ""
+                read -p "请选择 [0-2]: " update_choice
+
+                case $update_choice in
+                    1) generate_subscription ;;
+                    2)
+                        # 重新生成订阅
+                        show_subscription
+                        echo ""
+                        read -p "请输入要更新的订阅名称: " sub_name
+                        if [[ -n "$sub_name" ]]; then
+                            # TODO: 实现重新生成订阅逻辑
+                            print_warning "重新生成功能开发中"
+                        fi
+                        ;;
+                    0) ;;
+                    *) print_error "无效选择" ;;
+                esac
+                ;;
             4) delete_subscription ;;
-            5) config_subscription ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -350,26 +452,149 @@ menu_firewall() {
     done
 }
 
-# 配置管理菜单
-menu_config() {
+# 脚本管理菜单
+menu_script() {
     while true; do
         clear
-        echo -e "${CYAN}====== 配置管理 ======${NC}"
-        echo -e "${GREEN}1.${NC} 查看当前配置"
-        echo -e "${GREEN}2.${NC} 编辑配置文件"
-        echo -e "${GREEN}3.${NC} 备份配置"
-        echo -e "${GREEN}4.${NC} 恢复配置"
-        echo -e "${GREEN}5.${NC} 验证配置"
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          脚本管理                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 更新脚本"
+        echo -e "${GREEN}2.${NC} 卸载脚本"
+        echo -e "${GREEN}3.${NC} 卸载脚本及依赖"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-5]: " choice
+        read -p "请选择操作 [0-3]: " choice
 
         case $choice in
-            1) show_config ;;
-            2) edit_config ;;
-            3) backup_config ;;
-            4) restore_config ;;
-            5) validate_config ;;
+            1)
+                # 更新脚本
+                clear
+                echo -e "${CYAN}正在更新脚本...${NC}"
+
+                local script_path="${BASH_SOURCE[0]}"
+                if [[ -L "$script_path" ]]; then
+                    script_path="$(readlink -f "$script_path")"
+                fi
+                local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+
+                cd "$script_dir" || {
+                    print_error "无法进入脚本目录"
+                    read -p "按 Enter 键继续..."
+                    continue
+                }
+
+                if [[ -d ".git" ]]; then
+                    git pull || print_error "更新失败"
+                    print_success "脚本更新完成"
+                else
+                    print_warning "当前不是Git仓库，无法自动更新"
+                    echo -e "${YELLOW}请手动下载最新版本${NC}"
+                fi
+                ;;
+            2)
+                # 卸载脚本
+                clear
+                echo -e "${RED}╔═══════════════════════════════════════╗${NC}"
+                echo -e "${RED}║          警告：卸载脚本              ║${NC}"
+                echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
+                echo ""
+                echo -e "${YELLOW}此操作将卸载 s-xray 管理脚本${NC}"
+                echo -e "${YELLOW}包括所有配置文件和数据${NC}"
+                echo -e "${RED}Xray核心将保留${NC}"
+                echo ""
+
+                if confirm "确认卸载脚本" "n"; then
+                    local script_path="${BASH_SOURCE[0]}"
+                    if [[ -L "$script_path" ]]; then
+                        script_path="$(readlink -f "$script_path")"
+                    fi
+                    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+
+                    # 删除脚本目录
+                    rm -rf "$script_dir"
+                    # 删除软链接
+                    rm -f /usr/local/bin/xray
+
+                    print_success "脚本已卸载"
+                    echo -e "${YELLOW}Xray核心保留在系统中${NC}"
+                    exit 0
+                else
+                    print_info "已取消卸载"
+                fi
+                ;;
+            3)
+                # 卸载脚本及依赖
+                clear
+                echo -e "${RED}╔═══════════════════════════════════════╗${NC}"
+                echo -e "${RED}║      警告：完全卸载                  ║${NC}"
+                echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
+                echo ""
+                echo -e "${RED}此操作将完全卸载：${NC}"
+                echo -e "${YELLOW}  • s-xray 管理脚本${NC}"
+                echo -e "${YELLOW}  • Xray 核心程序${NC}"
+                echo -e "${YELLOW}  • 所有配置文件和数据${NC}"
+                echo ""
+
+                if confirm "确认完全卸载" "n"; then
+                    local script_path="${BASH_SOURCE[0]}"
+                    if [[ -L "$script_path" ]]; then
+                        script_path="$(readlink -f "$script_path")"
+                    fi
+                    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+
+                    if [[ -f "${script_dir}/uninstall.sh" ]]; then
+                        log_info "执行卸载脚本: ${script_dir}/uninstall.sh"
+                        exec bash "${script_dir}/uninstall.sh"
+                    elif [[ -f "/opt/s-xray/uninstall.sh" ]]; then
+                        log_info "执行卸载脚本: /opt/s-xray/uninstall.sh"
+                        exec bash "/opt/s-xray/uninstall.sh"
+                    else
+                        log_error "未找到卸载脚本"
+                        log_info "请手动运行: bash /opt/s-xray/uninstall.sh"
+                    fi
+                else
+                    print_info "已取消卸载"
+                fi
+                ;;
+            0) break ;;
+            *) print_error "无效选择" ;;
+        esac
+
+        read -p "按 Enter 键继续..."
+    done
+}
+
+# 出站规则管理菜单
+menu_outbound() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          出站规则管理                ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 查看规则"
+        echo -e "${GREEN}2.${NC} 添加规则"
+        echo -e "${GREEN}3.${NC} 修改规则"
+        echo -e "${GREEN}4.${NC} 删除规则"
+        echo -e "${GREEN}5.${NC} 启用规则"
+        echo -e "${GREEN}6.${NC} 禁用规则"
+        echo -e "${GREEN}0.${NC} 返回主菜单"
+        echo ""
+        read -p "请选择操作 [0-6]: " choice
+
+        case $choice in
+            1)
+                print_warning "出站规则功能正在开发中..."
+                echo -e "${YELLOW}即将支持：${NC}"
+                echo -e "  • 域名分流规则"
+                echo -e "  • IP分流规则"
+                echo -e "  • 直连/代理/拦截设置"
+                ;;
+            2|3|4|5|6)
+                print_warning "此功能正在开发中，敬请期待"
+                ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -389,54 +614,22 @@ main() {
     # 加载所有模块
     source_modules
 
-    log_info "Xray 管理脚本启动 (v1.2.1)"
+    log_info "Xray 管理脚本启动 (v1.2.2)"
 
     while true; do
         show_menu
         read -p "请选择操作: " choice
 
         case $choice in
-            1) menu_core ;;
-            2) menu_node ;;
-            3) menu_user ;;
-            4) menu_subscription ;;
-            5) menu_firewall ;;
-            6) menu_config ;;
-            7) domain_management_menu ;;
-            8) certificate_management_menu ;;
-            9)
-                # 卸载脚本
-                clear
-                echo -e "${RED}╔═══════════════════════════════════════╗${NC}"
-                echo -e "${RED}║          警告：卸载脚本              ║${NC}"
-                echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
-                echo ""
-                echo -e "${YELLOW}此操作将卸载 s-xray 管理脚本${NC}"
-                echo -e "${YELLOW}包括所有配置文件和数据${NC}"
-                echo ""
-
-                if confirm "确认卸载" "n"; then
-                    # 检查卸载脚本是否存在
-                    local script_path="${BASH_SOURCE[0]}"
-                    if [[ -L "$script_path" ]]; then
-                        script_path="$(readlink -f "$script_path")"
-                    fi
-                    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
-
-                    if [[ -f "${script_dir}/uninstall.sh" ]]; then
-                        log_info "执行卸载脚本: ${script_dir}/uninstall.sh"
-                        exec bash "${script_dir}/uninstall.sh"
-                    elif [[ -f "/opt/s-xray/uninstall.sh" ]]; then
-                        log_info "执行卸载脚本: /opt/s-xray/uninstall.sh"
-                        exec bash "/opt/s-xray/uninstall.sh"
-                    else
-                        log_error "未找到卸载脚本"
-                        log_info "请手动运行: bash /opt/s-xray/uninstall.sh"
-                    fi
-                else
-                    log_info "已取消卸载"
-                fi
-                ;;
+            1) menu_core ;;              # Xray管理
+            2) menu_user ;;              # 用户管理
+            3) menu_node ;;              # 节点管理
+            4) menu_subscription ;;      # 订阅管理
+            5) domain_management_menu ;; # 域名管理
+            6) certificate_management_menu ;; # 证书管理
+            7) menu_outbound ;;          # 出站规则
+            8) menu_firewall ;;          # 防火墙管理
+            9) menu_script ;;            # 脚本管理
             0)
                 echo ""
                 echo -e "${GREEN}感谢使用 Xray 管理脚本！${NC}"
