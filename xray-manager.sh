@@ -133,20 +133,20 @@ show_menu() {
     fi
 
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.0    ║${NC}"
+    echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.1    ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  系统状态                           ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${YELLOW}系统状态${NC}                           ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}│${NC}  内核版本: ${YELLOW}%-23s${CYAN}│${NC}" "$version"
-    echo -e "${CYAN}│${NC}  运行状态: $status                      ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}  节点数量: ${BLUE}%-23d${CYAN}│${NC}" "$node_count"
-    echo -e "${CYAN}│${NC}  用户数量: ${BLUE}%-23d${CYAN}│${NC}" "$user_count"
+    echo -e "${CYAN}│${NC}  内核版本: ${YELLOW}${version}${NC}"
+    echo -e "${CYAN}│${NC}  运行状态: ${status}"
+    echo -e "${CYAN}│${NC}  节点数量: ${BLUE}${node_count}${NC}"
+    echo -e "${CYAN}│${NC}  用户数量: ${BLUE}${user_count}${NC}"
     echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
     echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  功能菜单                           ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${YELLOW}功能菜单${NC}                           ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}1.${NC}  内核管理                       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}2.${NC}  节点管理                       ${CYAN}│${NC}"
@@ -157,7 +157,7 @@ show_menu() {
     echo -e "${CYAN}│${NC}  ${GREEN}7.${NC}  域名管理                       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}8.${NC}  证书管理                       ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}│${NC}  ${RED}99.${NC} 卸载脚本                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${RED}9.${NC}  卸载脚本                       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}0.${NC}  退出脚本                       ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
@@ -389,7 +389,7 @@ main() {
     # 加载所有模块
     source_modules
 
-    log_info "Xray 管理脚本启动 (v1.2.0)"
+    log_info "Xray 管理脚本启动 (v1.2.1)"
 
     while true; do
         show_menu
@@ -404,14 +404,15 @@ main() {
             6) menu_config ;;
             7) domain_management_menu ;;
             8) certificate_management_menu ;;
-            99)
+            9)
                 # 卸载脚本
                 clear
-                echo -e "${RED}=====================================${NC}"
-                echo -e "${RED}         警告：卸载脚本${NC}"
-                echo -e "${RED}=====================================${NC}"
+                echo -e "${RED}╔═══════════════════════════════════════╗${NC}"
+                echo -e "${RED}║          警告：卸载脚本              ║${NC}"
+                echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
                 echo ""
                 echo -e "${YELLOW}此操作将卸载 s-xray 管理脚本${NC}"
+                echo -e "${YELLOW}包括所有配置文件和数据${NC}"
                 echo ""
 
                 if confirm "确认卸载" "n"; then
@@ -437,7 +438,9 @@ main() {
                 fi
                 ;;
             0)
-                log_info "感谢使用 Xray 管理脚本！"
+                echo ""
+                echo -e "${GREEN}感谢使用 Xray 管理脚本！${NC}"
+                echo ""
                 exit 0
                 ;;
             *)
