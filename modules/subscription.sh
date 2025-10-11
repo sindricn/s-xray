@@ -83,7 +83,11 @@ urlencode() {
 
 # Base64 编码（无换行）
 base64_encode() {
-    echo -n "$1" | base64 -w 0 2>/dev/null || echo -n "$1" | base64
+    local input="${1:-}"
+    if [[ -z "$input" ]]; then
+        return 1
+    fi
+    echo -n "$input" | base64 -w 0 2>/dev/null || echo -n "$input" | base64
 }
 
 #================================================================
@@ -604,21 +608,53 @@ generate_subscription_with_user() {
     read -p "请选择 [1-2，默认: 1]: " sub_type
     sub_type=${sub_type:-1}
 
-    # 收集所有分享链接
+    # 收集所有分享链接（新架构：只生成用户绑定的节点）
     print_info "正在生成分享链接..."
+    echo ""
+
+    # 获取用户绑定的节点列表
+    local user_node_ports=()
+    if [[ -f "$NODE_USERS_FILE" ]]; then
+        while IFS= read -r binding; do
+            local bport=$(echo "$binding" | jq -r '.port')
+            local users=$(echo "$binding" | jq -r '.users[]')
+
+            # 检查用户是否在该节点的用户列表中
+            if echo "$users" | grep -q "$sub_user_id"; then
+                user_node_ports+=("$bport")
+            fi
+        done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
+    fi
+
+    if [[ ${#user_node_ports[@]} -eq 0 ]]; then
+        print_warning "用户 $sub_user_email 未绑定任何节点"
+        echo ""
+        read -p "是否生成所有节点的订阅? [y/N]: " use_all_nodes
+        if [[ "$use_all_nodes" != "y" && "$use_all_nodes" != "Y" ]]; then
+            print_info "取消生成订阅"
+            return 0
+        fi
+        # 如果选择使用所有节点，获取所有节点端口
+        while IFS= read -r node; do
+            user_node_ports+=($(echo "$node" | jq -r '.port'))
+        done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+    fi
+
+    print_info "用户可访问节点数: ${#user_node_ports[@]}"
     echo ""
 
     local share_links=()
     local link_count=0
 
-    # 遍历所有节点
-    while IFS= read -r node; do
+    # 遍历用户绑定的节点
+    for port in "${user_node_ports[@]}"; do
+        local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+
         if [[ -z "$node" || "$node" == "null" ]]; then
             continue
         fi
 
         local protocol=$(echo "$node" | jq -r '.protocol')
-        local port=$(echo "$node" | jq -r '.port')
 
         # 使用选定的用户生成链接
         local link=$(generate_share_link_smart "$sub_user_id" "$sub_user_email" "$node")
@@ -629,7 +665,7 @@ generate_subscription_with_user() {
         else
             echo -e "  ${RED}✘${NC} 节点 ${protocol}:${port} - 生成失败"
         fi
-    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+    done
 
     if [[ $link_count -eq 0 ]]; then
         print_error "没有可用的节点配置"
@@ -816,6 +852,108 @@ delete_subscription() {
     remove_subscription_info "$sub_name"
 
     print_success "订阅删除成功"
+}
+
+# 重新生成订阅（更新现有订阅）
+regenerate_subscription() {
+    local sub_name="$1"
+
+    if [[ -z "$sub_name" ]]; then
+        print_error "订阅名称不能为空"
+        return 1
+    fi
+
+    local sub_db="${DATA_DIR}/subscriptions.json"
+    if [[ ! -f "$sub_db" ]]; then
+        print_error "订阅数据库不存在"
+        return 1
+    fi
+
+    # 获取订阅信息
+    local sub_info=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$sub_db" 2>/dev/null)
+    if [[ -z "$sub_info" ]]; then
+        print_error "订阅 '${sub_name}' 不存在"
+        return 1
+    fi
+
+    # 获取订阅配置
+    local user_id=$(echo "$sub_info" | jq -r '.user_id // empty')
+    local sub_type=$(echo "$sub_info" | jq -r '.type // "base64"')
+    local sub_file=$(echo "$sub_info" | jq -r '.file')
+
+    echo ""
+    print_info "正在重新生成订阅: ${sub_name}"
+    print_info "订阅类型: ${sub_type}"
+    if [[ -n "$user_id" ]]; then
+        local user_email=$(jq -r ".users[] | select(.id == \"$user_id\") | .email" "$USERS_FILE" 2>/dev/null)
+        print_info "绑定用户: ${user_email} (${user_id})"
+    fi
+
+    # 根据订阅类型重新生成内容
+    case "$sub_type" in
+        "base64")
+            # Base64编码订阅
+            local links=""
+            if [[ -n "$user_id" ]]; then
+                # 用户绑定订阅：只包含该用户的节点
+                links=$(generate_user_share_links "$user_id")
+            else
+                # 通用订阅：包含所有节点+所有用户
+                links=$(generate_all_share_links)
+            fi
+
+            if [[ -z "$links" ]]; then
+                print_error "没有可用的节点"
+                return 1
+            fi
+
+            # Base64编码
+            local encoded=$(echo -n "$links" | base64 -w 0 2>/dev/null || echo -n "$links" | base64)
+            echo "$encoded" > "$sub_file"
+            ;;
+
+        "clash")
+            # Clash YAML格式
+            generate_clash_config "$user_id" > "$sub_file"
+            ;;
+
+        "raw")
+            # 原始文本格式
+            if [[ -n "$user_id" ]]; then
+                generate_user_share_links "$user_id" > "$sub_file"
+            else
+                generate_all_share_links > "$sub_file"
+            fi
+            ;;
+
+        *)
+            print_error "未知的订阅类型: ${sub_type}"
+            return 1
+            ;;
+    esac
+
+    # 更新订阅信息中的更新时间
+    jq "(.subscriptions[] | select(.name == \"$sub_name\") | .updated) = (now|todate)" "$sub_db" > "${sub_db}.tmp"
+    mv "${sub_db}.tmp" "$sub_db"
+
+    print_success "订阅重新生成成功！"
+
+    # 显示订阅信息
+    local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
+    local server_ip=$(get_public_ip)
+    local sub_url="http://${server_ip}:${port}/sub/${sub_name}"
+
+    echo ""
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          订阅链接                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${GREEN}订阅名称:${NC} ${sub_name}"
+    echo -e "${GREEN}订阅类型:${NC} ${sub_type}"
+    echo -e "${GREEN}订阅链接:${NC}"
+    echo ""
+    echo -e "${YELLOW}${sub_url}${NC}"
+    echo ""
 }
 
 # 订阅配置

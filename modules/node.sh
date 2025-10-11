@@ -6,6 +6,36 @@
 # 三层架构：协议层 - 传输层 - 加密层（TLS/Reality）
 #================================================================
 
+# 检查端口是否已被占用
+check_port_exists() {
+    local port=$1
+
+    if [[ -z "$port" ]]; then
+        return 1
+    fi
+
+    # 检查nodes.json中是否已存在该端口
+    if [[ -f "$NODES_FILE" ]]; then
+        local existing=$(jq -r ".nodes[] | select(.port == \"$port\") | .port" "$NODES_FILE" 2>/dev/null)
+        if [[ -n "$existing" ]]; then
+            return 0  # 端口已存在
+        fi
+    fi
+
+    # 检查系统端口占用（使用ss或netstat）
+    if command -v ss &>/dev/null; then
+        if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+            return 0  # 端口已被占用
+        fi
+    elif command -v netstat &>/dev/null; then
+        if netstat -tlnp 2>/dev/null | grep -q ":$port "; then
+            return 0  # 端口已被占用
+        fi
+    fi
+
+    return 1  # 端口可用
+}
+
 # 测试 Reality 密钥生成（调试用）
 test_reality_keygen() {
     echo -e "${CYAN}====== Reality 密钥生成测试 ======${NC}"
@@ -106,14 +136,11 @@ quick_add_vless_reality() {
     read -p "请输入监听端口 [默认: 443]: " port
     port=${port:-443}
 
-    read -p "请输入用户UUID [留空自动生成]: " uuid
-    if [[ -z "$uuid" ]]; then
-        uuid=$(generate_uuid)
-        print_info "自动生成 UUID: $uuid"
+    # 检查端口是否已被占用
+    if check_port_exists "$port"; then
+        print_error "端口 $port 已被占用或已存在，请使用其他端口"
+        return 1
     fi
-
-    read -p "请输入用户邮箱/备注 [默认: user@reality]: " email
-    email=${email:-user@reality}
 
     # Reality 配置
     echo ""
@@ -333,52 +360,27 @@ quick_add_vless_reality() {
     local short_id=$(openssl rand -hex 8)
     print_info "ShortId: $short_id"
 
-    # 生成配置
-    local inbound_config=$(cat <<EOF
-    {
-      "port": ${port},
-      "protocol": "vless",
-      "tag": "vless-reality-${port}",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "email": "${email}",
-            "level": 0,
-            "flow": "xtls-rprx-vision"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "show": false,
-          "dest": "${dest_server}:443",
-          "xver": 0,
-          "serverNames": [
-            "${server_names}"
-          ],
-          "privateKey": "${private_key}",
-          "shortIds": [
-            "${short_id}"
-          ]
-        }
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"]
-      }
-    }
-EOF
-)
+    # 构建Reality额外配置（JSON格式）
+    local reality_config=$(jq -n \
+        --arg dest "$dest_server:443" \
+        --arg sni "$server_names" \
+        --arg private_key "$private_key" \
+        --arg public_key "$public_key" \
+        --arg short_id "$short_id" \
+        '{
+            dest: $dest,
+            server_names: [$sni],
+            private_key: $private_key,
+            public_key: $public_key,
+            short_ids: [$short_id],
+            flow: "xtls-rprx-vision"
+        }')
 
-    # 保存节点信息
-    save_node_info "vless" "$port" "$uuid" "$email" "tcp" "$inbound_config"
+    # 保存节点信息（新架构：只保存节点技术参数）
+    save_node_info "vless" "$port" "tcp" "reality" "$reality_config"
 
-    # 更新配置文件
-    add_inbound_to_config "$inbound_config"
+    # 重新生成Xray配置文件
+    generate_xray_config
 
     # 重启服务
     restart_xray
@@ -390,8 +392,9 @@ EOF
     echo ""
     echo -e "${CYAN}节点信息：${NC}"
     echo -e "  端口: ${YELLOW}$port${NC}"
-    echo -e "  UUID: ${YELLOW}$uuid${NC}"
-    echo -e "  Flow: ${YELLOW}xtls-rprx-vision${NC}"
+    echo -e "  协议: ${YELLOW}VLESS${NC}"
+    echo -e "  传输: ${YELLOW}TCP${NC}"
+    echo -e "  安全: ${YELLOW}Reality${NC}"
     echo ""
     echo -e "${CYAN}Reality 配置：${NC}"
     echo -e "  目标网站: ${YELLOW}$dest_server${NC}"
@@ -399,11 +402,13 @@ EOF
     echo -e "  公钥: ${YELLOW}$public_key${NC}"
     echo -e "  ShortId: ${YELLOW}$short_id${NC}"
     echo ""
-    echo -e "${YELLOW}提示：请保存以上信息用于客户端配置${NC}"
+    echo -e "${GREEN}✅ 节点创建完成！${NC}"
     echo ""
-
-    # 生成分享链接 (Reality 格式)
-    generate_vless_reality_share "$uuid" "$email" "$port" "$server_names" "$public_key" "$short_id"
+    echo -e "${YELLOW}提示：${NC}"
+    echo -e "  1. 节点已创建，但尚未绑定用户"
+    echo -e "  2. 请前往【用户管理】添加用户并绑定到此节点"
+    echo -e "  3. 或使用【订阅管理】生成订阅链接时选择用户"
+    echo ""
 }
 
 # 生成 VLESS Reality 分享链接
@@ -588,14 +593,11 @@ add_vmess_node() {
     read -p "请输入端口 [默认: 10086]: " port
     port=${port:-10086}
 
-    read -p "请输入用户UUID [留空自动生成]: " uuid
-    if [[ -z "$uuid" ]]; then
-        uuid=$(generate_uuid)
-        print_info "自动生成 UUID: $uuid"
+    # 检查端口是否已被占用
+    if check_port_exists "$port"; then
+        print_error "端口 $port 已被占用，请使用其他端口"
+        return 1
     fi
-
-    read -p "请输入用户邮箱/备注 [默认: user@vmess]: " email
-    email=${email:-user@vmess}
 
     read -p "请输入 alterId [默认: 0]: " alter_id
     alter_id=${alter_id:-0}
@@ -636,54 +638,35 @@ add_vmess_node() {
         ws_path=${ws_path:-/vmess}
     fi
 
-    # 生成配置
-    local inbound_config=$(cat <<EOF
-    {
-      "port": ${port},
-      "protocol": "vmess",
-      "tag": "vmess-${port}",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "email": "${email}",
-            "level": 0,
-            "alterId": ${alter_id}
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "${transport}"
-EOF
-)
+    # 构建extra_config JSON (包含VMess特定参数)
+    local extra_config=$(jq -n \
+        --argjson alter_id "$alter_id" \
+        --arg cipher "$cipher" \
+        --arg ws_path "$ws_path" \
+        '{
+            alter_id: $alter_id,
+            cipher: $cipher,
+            ws_path: $ws_path
+        }')
 
-    if [[ "$transport" == "ws" ]]; then
-        inbound_config+=",
-        \"wsSettings\": {
-          \"path\": \"${ws_path}\"
-        }"
-    fi
+    # 保存节点信息(只保存技术参数,不包含用户)
+    save_node_info "vmess" "$port" "$transport" "none" "$extra_config"
 
-    inbound_config+="
-      },
-      \"sniffing\": {
-        \"enabled\": true,
-        \"destOverride\": [\"http\", \"tls\"]
-      }
-    }"
-
-    # 保存并应用
-    save_node_info "vmess" "$port" "$uuid" "$email" "$transport" "$inbound_config"
-    add_inbound_to_config "$inbound_config"
+    # 重新生成完整配置
+    generate_xray_config
     restart_xray
 
-    print_success "VMess 节点添加成功！"
+    print_success "VMess 节点创建成功！"
     print_info "端口: $port"
-    print_info "UUID: $uuid"
+    print_info "传输协议: $transport"
     print_info "AlterID: $alter_id"
     print_info "加密: $cipher"
-
-    generate_vmess_share_link "$uuid" "$email" "$port" "$transport" "$ws_path" "$alter_id" "$cipher"
+    if [[ "$transport" == "ws" ]]; then
+        print_info "WebSocket路径: $ws_path"
+    fi
+    echo ""
+    print_warning "节点已创建但尚未绑定用户"
+    print_info "请前往【用户管理】-> 【绑定用户到节点】完成用户绑定"
 }
 
 # 添加 Trojan 节点
@@ -694,14 +677,11 @@ add_trojan_node() {
     read -p "请输入端口 [默认: 443]: " port
     port=${port:-443}
 
-    read -p "请输入密码: " password
-    while [[ -z "$password" ]]; do
-        print_error "密码不能为空"
-        read -p "请输入密码: " password
-    done
-
-    read -p "请输入用户邮箱/备注 [默认: user@trojan]: " email
-    email=${email:-user@trojan}
+    # 检查端口是否已被占用
+    if check_port_exists "$port"; then
+        print_error "端口 $port 已被占用，请使用其他端口"
+        return 1
+    fi
 
     # TLS 配置（Trojan 必须使用 TLS）
     read -p "请输入域名: " tls_domain
@@ -721,68 +701,48 @@ add_trojan_node() {
 
     # 回落配置
     read -p "是否配置回落? [y/N]: " enable_fallback
-    local fallback_config=""
+    local fallback_dest=""
+    local fallback_port=""
     if [[ "$enable_fallback" == "y" || "$enable_fallback" == "Y" ]]; then
         read -p "回落地址 [默认: 127.0.0.1]: " fallback_dest
         fallback_dest=${fallback_dest:-127.0.0.1}
         read -p "回落端口 [默认: 80]: " fallback_port
         fallback_port=${fallback_port:-80}
-
-        fallback_config=",
-        \"fallbacks\": [
-          {
-            \"dest\": \"${fallback_dest}:${fallback_port}\"
-          }
-        ]"
     fi
 
-    # 生成配置
-    local inbound_config=$(cat <<EOF
-    {
-      "port": ${port},
-      "protocol": "trojan",
-      "tag": "trojan-${port}",
-      "settings": {
-        "clients": [
-          {
-            "password": "${password}",
-            "email": "${email}",
-            "level": 0
-          }
-        ]${fallback_config}
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "${tls_domain}",
-          "alpn": ["http/1.1"],
-          "certificates": [
-            {
-              "certificateFile": "${tls_cert}",
-              "keyFile": "${tls_key}"
-            }
-          ]
-        }
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls"]
-      }
-    }
-EOF
-)
+    # 构建extra_config JSON (包含Trojan特定参数)
+    local extra_config=$(jq -n \
+        --arg tls_domain "$tls_domain" \
+        --arg tls_cert "$tls_cert" \
+        --arg tls_key "$tls_key" \
+        --arg fallback_dest "$fallback_dest" \
+        --arg fallback_port "$fallback_port" \
+        '{
+            tls_domain: $tls_domain,
+            tls_cert: $tls_cert,
+            tls_key: $tls_key,
+            fallback_dest: $fallback_dest,
+            fallback_port: $fallback_port
+        }')
 
-    save_node_info "trojan" "$port" "$password" "$email" "tcp" "$inbound_config"
-    add_inbound_to_config "$inbound_config"
+    # 保存节点信息(只保存技术参数,不包含用户密码)
+    save_node_info "trojan" "$port" "tcp" "tls" "$extra_config"
+
+    # 重新生成完整配置
+    generate_xray_config
     restart_xray
 
-    print_success "Trojan 节点添加成功！"
+    print_success "Trojan 节点创建成功！"
     print_info "端口: $port"
-    print_info "密码: $password"
     print_info "域名: $tls_domain"
-
-    generate_trojan_share_link "$password" "$tls_domain" "$port"
+    print_info "证书: $tls_cert"
+    if [[ -n "$fallback_dest" ]]; then
+        print_info "回落: ${fallback_dest}:${fallback_port}"
+    fi
+    echo ""
+    print_warning "节点已创建但尚未绑定用户"
+    print_info "请前往【用户管理】-> 【绑定用户到节点】完成用户绑定"
+    print_info "注意: Trojan协议的密码需要在添加用户时为每个用户单独设置"
 }
 
 # 添加 Shadowsocks 节点
@@ -793,11 +753,11 @@ add_shadowsocks_node() {
     read -p "请输入端口 [默认: 8388]: " port
     port=${port:-8388}
 
-    read -p "请输入密码: " password
-    while [[ -z "$password" ]]; do
-        print_error "密码不能为空"
-        read -p "请输入密码: " password
-    done
+    # 检查端口是否已被占用
+    if check_port_exists "$port"; then
+        print_error "端口 $port 已被占用，请使用其他端口"
+        return 1
+    fi
 
     # 选择加密方式
     echo -e "\n${CYAN}加密方式：${NC}"
@@ -815,40 +775,27 @@ add_shadowsocks_node() {
         *) cipher="aes-256-gcm" ;;
     esac
 
-    read -p "请输入用户邮箱/备注 [默认: user@ss]: " email
-    email=${email:-user@ss}
+    # 构建extra_config JSON (包含Shadowsocks特定参数)
+    local extra_config=$(jq -n \
+        --arg cipher "$cipher" \
+        '{
+            cipher: $cipher
+        }')
 
-    # 生成配置
-    local inbound_config=$(cat <<EOF
-    {
-      "port": ${port},
-      "protocol": "shadowsocks",
-      "tag": "ss-${port}",
-      "settings": {
-        "method": "${cipher}",
-        "password": "${password}",
-        "email": "${email}",
-        "level": 0,
-        "network": "tcp,udp"
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls"]
-      }
-    }
-EOF
-)
+    # 保存节点信息(只保存技术参数,不包含用户密码)
+    save_node_info "shadowsocks" "$port" "tcp" "none" "$extra_config"
 
-    save_node_info "shadowsocks" "$port" "$password" "$email" "tcp" "$inbound_config"
-    add_inbound_to_config "$inbound_config"
+    # 重新生成完整配置
+    generate_xray_config
     restart_xray
 
-    print_success "Shadowsocks 节点添加成功！"
+    print_success "Shadowsocks 节点创建成功！"
     print_info "端口: $port"
-    print_info "密码: $password"
-    print_info "加密: $cipher"
-
-    generate_ss_share_link "$cipher" "$password" "$port"
+    print_info "加密方式: $cipher"
+    echo ""
+    print_warning "节点已创建但尚未绑定用户"
+    print_info "请前往【用户管理】-> 【绑定用户到节点】完成用户绑定"
+    print_info "注意: Shadowsocks协议的密码需要在添加用户时为每个用户单独设置"
 }
 
 # 删除节点
@@ -975,23 +922,21 @@ generate_self_signed_cert() {
     print_success "证书生成完成"
 }
 
-# 保存节点信息到数据库
+# 保存节点信息到数据库（新架构：只保存节点技术参数，不包含用户信息）
 save_node_info() {
     local protocol=$1
     local port=$2
-    local id=$3
-    local email=$4
-    local transport=$5
-    local config=$6
+    local transport=$3
+    local security=$4      # reality/tls/none
+    local extra_config=$5  # JSON格式的额外配置（Reality参数等）
 
     local node_data=$(jq -n \
         --arg protocol "$protocol" \
         --arg port "$port" \
-        --arg id "$id" \
-        --arg email "$email" \
         --arg transport "$transport" \
-        --arg config "$config" \
-        '{protocol: $protocol, port: $port, id: $id, email: $email, transport: $transport, config: $config, created: now|todate}')
+        --arg security "$security" \
+        --argjson extra "$extra_config" \
+        '{protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
 
     # 读取现有数据
     local current_data=$(cat "$NODES_FILE")

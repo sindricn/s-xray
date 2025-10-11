@@ -1,6 +1,217 @@
 # 更新日志
 
+## [v1.3.0] - 2025-10-10
+
+### 🏗️ 重大架构重构：节点用户分离
+
+#### 架构变更 ⚡
+从"节点绑定用户"重构为"节点用户分离"架构，实现真正的多对多关系。
+
+**核心改进**：
+- ✅ **节点独立性** - 节点创建时不再绑定用户，只定义技术参数
+- ✅ **用户全局化** - 用户在全局管理，UUID和email全局唯一
+- ✅ **灵活绑定** - 一个用户可访问多个节点，一个节点可服务多个用户
+- ✅ **动态配置** - config.json根据绑定关系动态生成
+
+#### 新数据结构 📊
+
+**users.json（全局用户池）**：
+```json
+{
+  "users": [
+    {"id": "uuid", "email": "user@example.com", "level": 0, "enabled": true}
+  ]
+}
+```
+
+**node_users.json（绑定关系）- 新增**：
+```json
+{
+  "bindings": [
+    {"port": "443", "protocol": "vless", "users": ["uuid1", "uuid2"]}
+  ]
+}
+```
+
+#### 新增模块 🆕
+
+1. **config_generator.sh** - 动态配置生成引擎
+   - `generate_xray_config()` - 根据nodes.json + users.json + node_users.json生成config.json
+   - `generate_inbound_config()` - 智能inbound配置生成
+   - `generate_stream_settings()` - streamSettings动态生成
+   - 支持协议：VLESS, VMess, Trojan
+   - 支持安全：Reality, TLS, None
+
+2. **user_node_binding.sh** - 用户节点绑定管理
+   - `bind_user_to_node()` - 绑定用户到节点
+   - `unbind_user_from_node()` - 解绑用户
+   - `show_user_node_bindings()` - 显示所有绑定关系
+   - `show_user_nodes()` - 查看用户可访问的节点
+   - `show_node_users()` - 查看节点的用户列表
+   - `batch_bind_user_to_nodes()` - 批量绑定用户到多个节点
+
+3. **数据迁移工具**
+   - `scripts/migrate_to_separated_architecture.sh` - 完整数据迁移脚本
+   - 自动备份、转换数据结构、验证完整性、生成报告
+
+#### 重构功能 🔧
+
+**节点管理（modules/node.sh）**：
+- `save_node_info()` - 完全重写，参数变更
+  - 新签名：`(protocol, port, transport, security, extra_config)`
+  - 只保存节点技术参数，不包含用户信息
+- `quick_add_vless_reality()` - 去除UUID和email输入 ✅
+  - 节点创建完成后提示用户绑定
+  - 调用`generate_xray_config()`重新生成配置
+- `add_vmess_node()` - 重构VMess节点创建 ✅
+  - 去除UUID/email/password输入
+  - 只保存端口、传输协议、加密方式等技术参数
+- `add_trojan_node()` - 重构Trojan节点创建 ✅
+  - 去除password/email输入
+  - 保存TLS域名、证书、回落配置等技术参数
+- `add_shadowsocks_node()` - 重构Shadowsocks节点创建 ✅
+  - 去除password/email输入
+  - 保存加密方式等技术参数
+
+**用户管理（modules/user.sh）**：
+- `list_global_users()` - 显示全局用户列表 ✨ 新增
+- `add_global_user()` - 添加全局用户（可选绑定节点）✨ 新增
+- `delete_global_user()` - 删除全局用户（自动清理绑定）✨ 新增
+- `check_email_exists()` - 支持全局和节点级别查重
+
+**订阅管理（modules/subscription.sh）**：
+- `generate_subscription_with_user()` - 调整订阅生成逻辑 ✅
+  - 只为用户已绑定的节点生成订阅链接
+  - 无绑定节点时提示并可选择生成全部节点
+  - 显示用户可访问节点数量
+
+**菜单系统（xray-manager.sh）**：
+- **用户管理菜单** - 完全重构 ✅
+  - 新增"全局用户管理"分组（查看、添加、删除用户）
+  - 新增"用户节点绑定"分组（绑定、解绑、查看关系、批量绑定）
+  - 保留旧版功能（向后兼容）
+- **节点管理菜单** - 新增功能 ✅
+  - 新增"节点用户管理"分组
+  - 查看节点的用户列表
+  - 查看所有绑定关系
+
+#### 使用流程变化 🔄
+
+**旧流程**（已废弃）：
+```
+创建节点 → 输入UUID和email → 节点用户绑定在一起
+```
+
+**新流程**：
+```
+1. 创建节点（只定义端口、协议、域名等）
+2. 添加用户（全局用户池，UUID自动生成）
+3. 绑定用户到节点（灵活关联）
+4. 生成配置（动态组合）
+```
+
+#### 迁移指南 📖
+
+1. **备份数据**：
+   ```bash
+   cp -r /usr/local/xray/data /usr/local/xray/data.backup
+   ```
+
+2. **运行迁移脚本**：
+   ```bash
+   bash /usr/local/xray/scripts/migrate_to_separated_architecture.sh
+   ```
+
+3. **验证迁移**：
+   - 检查 users.json（UUID和email唯一性）
+   - 检查 node_users.json（绑定关系正确）
+   - 查看迁移报告
+
+#### 兼容性说明 ⚠️
+
+- ✅ 旧函数暂时保留（向后兼容）
+- ✅ 数据迁移脚本自动处理转换
+- ⚠️ 新旧架构的config.json格式不同
+- ⚠️ 建议在测试环境先测试
+
+#### 技术优势 🚀
+
+1. **灵活性提升**
+   - 一个用户可使用多个节点（多地域、多协议）
+   - 一个节点可服务多个用户（节省端口）
+
+2. **管理简化**
+   - 用户全局管理，不与节点耦合
+   - 删除节点不影响用户数据
+   - 修改用户信息一次生效全部节点
+
+3. **扩展性增强**
+   - 支持复杂的访问控制策略
+   - 便于实现用户分组、权限管理
+   - 为未来的流量统计、计费系统奠定基础
+
+#### 文档更新 📚
+
+- **架构设计**: `claudedocs/架构重构方案-节点用户分离.md`
+- **完成总结**: `claudedocs/架构重构完成总结.md`
+- **迁移脚本**: `scripts/migrate_to_separated_architecture.sh`
+
+---
+
 ## [v1.2.2] - 2025-10-10
+
+### 🐛 重要Bug修复
+
+#### 数据完整性修复 ✅
+- **端口查重逻辑** - 防止端口冲突导致服务不可用
+  - 新增 `check_port_exists()` 函数（modules/node.sh:9-37）
+  - 检查nodes.json中的端口记录
+  - 检查系统端口占用状态（ss/netstat）
+  - 节点创建前自动验证端口可用性
+
+- **用户名查重逻辑** - 防止用户邮箱重复
+  - 新增 `check_email_exists()` 函数（modules/user.sh:8-34）
+  - 支持节点级别和全局级别查重
+  - 用户添加前自动验证邮箱唯一性
+  - 防止数据混乱和管理问题
+
+#### 错误提示优化 ⚠️
+- **端口冲突提示**：`端口 {port} 已被占用或已存在，请使用其他端口`
+- **邮箱重复提示**：`用户邮箱 '{email}' 在端口 {port} 上已存在`
+- 提前拦截错误，避免配置失败
+
+### 🐛 订阅管理修复
+
+#### 核心问题修复 ✅
+- **修复base64_encode()函数** - 添加参数验证，防止"unbound variable"错误
+  - 使用 `${1:-}` 安全参数展开
+  - 添加空值检查和错误返回
+  - 修复 subscription.sh:86 错误
+
+- **完善订阅管理菜单** - 添加缺失的生成订阅功能
+  - 新增独立"生成订阅链接"选项（选项2）
+  - 优化菜单结构为5项（原4项）
+  - 调整菜单编号顺序更符合逻辑
+
+- **新增订阅更新功能** - regenerate_subscription()
+  - 重新生成现有订阅内容
+  - 保留订阅配置（用户绑定、订阅类型）
+  - 自动更新订阅时间戳
+  - 支持三种订阅格式（Base64/Clash/Raw）
+
+#### 订阅管理新菜单结构
+```
+1. 查看节点链接        - 独立查看单个节点分享链接
+2. 生成订阅链接 (新增) - 创建新的订阅（支持用户绑定）
+3. 查看订阅链接        - 查看所有已创建订阅列表
+4. 更新订阅            - 重新生成现有订阅内容
+5. 删除订阅            - 删除指定订阅
+```
+
+#### 技术改进 🔧
+- **参数安全性**: 所有接收参数的函数都添加了默认值处理
+- **错误处理**: 完善订阅生成过程中的错误检查和用户提示
+- **用户体验**: 重新生成订阅时显示详细配置信息
 
 ### 🎯 项目结构重构
 

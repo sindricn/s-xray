@@ -26,6 +26,7 @@ readonly XRAY_SERVICE="/etc/systemd/system/xray.service"
 readonly DATA_DIR="${XRAY_DIR}/data"
 readonly USERS_FILE="${DATA_DIR}/users.json"
 readonly NODES_FILE="${DATA_DIR}/nodes.json"
+readonly NODE_USERS_FILE="${DATA_DIR}/node_users.json"  # 新架构：节点-用户绑定关系
 readonly SUBSCRIPTION_DIR="${DATA_DIR}/subscriptions"
 
 # 日志配置
@@ -291,9 +292,13 @@ menu_node() {
         echo -e "${GREEN}7.${NC} 查看节点列表"
         echo -e "${GREEN}8.${NC} 修改节点配置"
         echo ""
+        echo -e "${CYAN}👥 节点用户管理：${NC}"
+        echo -e "${GREEN}9.${NC} 查看节点的用户列表"
+        echo -e "${GREEN}10.${NC} 查看所有绑定关系"
+        echo ""
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-8]: " choice
+        read -p "请选择操作 [0-10]: " choice
 
         case $choice in
             1) quick_add_vless_reality ;;
@@ -304,6 +309,8 @@ menu_node() {
             6) delete_node ;;
             7) list_nodes ;;
             8) modify_node ;;
+            9) show_node_users ;;
+            10) show_user_node_bindings ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -312,26 +319,53 @@ menu_node() {
     done
 }
 
-# 用户管理菜单
+# 用户管理菜单（新架构）
 menu_user() {
     while true; do
         clear
-        echo -e "${CYAN}====== 用户管理 ======${NC}"
-        echo -e "${GREEN}1.${NC} 添加用户"
-        echo -e "${GREEN}2.${NC} 删除用户"
-        echo -e "${GREEN}3.${NC} 查看用户列表"
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          用户管理                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${CYAN}👥 全局用户管理：${NC}"
+        echo -e "${GREEN}1.${NC} 查看全局用户列表"
+        echo -e "${GREEN}2.${NC} 添加全局用户"
+        echo -e "${GREEN}3.${NC} 删除全局用户"
         echo -e "${GREEN}4.${NC} 修改用户配置"
-        echo -e "${GREEN}5.${NC} 生成 UUID"
+        echo ""
+        echo -e "${CYAN}🔗 用户节点绑定：${NC}"
+        echo -e "${GREEN}5.${NC} 绑定用户到节点"
+        echo -e "${GREEN}6.${NC} 从节点解绑用户"
+        echo -e "${GREEN}7.${NC} 查看用户可访问的节点"
+        echo -e "${GREEN}8.${NC} 批量绑定用户到多个节点"
+        echo ""
+        echo -e "${CYAN}🔧 其他功能：${NC}"
+        echo -e "${GREEN}9.${NC} 生成 UUID"
+        echo ""
+        echo -e "${CYAN}📋 旧版功能（兼容）：${NC}"
+        echo -e "${GREEN}11.${NC} 添加用户（旧版-绑定到节点）"
+        echo -e "${GREEN}12.${NC} 查看用户列表（旧版-按节点）"
+        echo ""
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-5]: " choice
+        read -p "请选择操作 [0-12]: " choice
 
         case $choice in
-            1) add_user ;;
-            2) delete_user ;;
-            3) list_users ;;
+            1) list_global_users ;;
+            2) add_global_user ;;
+            3) delete_global_user ;;
             4) modify_user ;;
-            5) generate_uuid ;;
+            5) bind_user_to_node ;;
+            6) unbind_user_from_node ;;
+            7) show_user_nodes ;;
+            8) batch_bind_user_to_nodes ;;
+            9)
+                echo ""
+                local uuid=$(generate_uuid)
+                print_success "生成的UUID: $uuid"
+                ;;
+            11) add_user ;;  # 旧版功能
+            12) list_users ;;  # 旧版功能
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -349,43 +383,29 @@ menu_subscription() {
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
         echo -e "${GREEN}1.${NC} 查看节点链接"
-        echo -e "${GREEN}2.${NC} 查看订阅链接"
-        echo -e "${GREEN}3.${NC} 更新订阅"
-        echo -e "${GREEN}4.${NC} 删除订阅"
+        echo -e "${GREEN}2.${NC} 生成订阅链接"
+        echo -e "${GREEN}3.${NC} 查看订阅链接"
+        echo -e "${GREEN}4.${NC} 更新订阅"
+        echo -e "${GREEN}5.${NC} 删除订阅"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-4]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
             1) show_node_share_link ;;  # 查看单个节点链接
-            2) show_subscription ;;      # 查看所有订阅链接
-            3)
-                # 更新订阅（重新生成）
+            2) generate_subscription_with_user ;;  # 生成订阅链接（支持用户绑定）
+            3) show_subscription ;;      # 查看所有订阅链接
+            4)
+                # 更新订阅（重新生成现有订阅）
+                show_subscription
                 echo ""
-                echo -e "${YELLOW}更新订阅选项：${NC}"
-                echo -e "${GREEN}1.${NC} 生成新订阅"
-                echo -e "${GREEN}2.${NC} 重新生成现有订阅"
-                echo -e "${GREEN}0.${NC} 返回"
-                echo ""
-                read -p "请选择 [0-2]: " update_choice
-
-                case $update_choice in
-                    1) generate_subscription ;;
-                    2)
-                        # 重新生成订阅
-                        show_subscription
-                        echo ""
-                        read -p "请输入要更新的订阅名称: " sub_name
-                        if [[ -n "$sub_name" ]]; then
-                            # TODO: 实现重新生成订阅逻辑
-                            print_warning "重新生成功能开发中"
-                        fi
-                        ;;
-                    0) ;;
-                    *) print_error "无效选择" ;;
-                esac
+                read -p "请输入要更新的订阅名称: " sub_name
+                if [[ -n "$sub_name" ]]; then
+                    # 调用重新生成函数
+                    regenerate_subscription "$sub_name"
+                fi
                 ;;
-            4) delete_subscription ;;
+            5) delete_subscription ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac

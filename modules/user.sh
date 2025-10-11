@@ -5,6 +5,34 @@
 # 功能：添加、删除、查看、修改用户，UUID生成
 #================================================================
 
+# 检查用户邮箱是否已存在
+check_email_exists() {
+    local email=$1
+    local port=$2  # 可选参数，指定节点端口
+
+    if [[ -z "$email" ]]; then
+        return 1
+    fi
+
+    if [[ ! -f "$USERS_FILE" ]]; then
+        return 1  # 用户文件不存在，邮箱可用
+    fi
+
+    # 如果指定了端口，检查该节点下是否存在该邮箱
+    if [[ -n "$port" ]]; then
+        local existing=$(jq -r ".users[] | select(.port == \"$port\" and .email == \"$email\") | .email" "$USERS_FILE" 2>/dev/null)
+    else
+        # 全局检查（任意节点）
+        local existing=$(jq -r ".users[] | select(.email == \"$email\") | .email" "$USERS_FILE" 2>/dev/null)
+    fi
+
+    if [[ -n "$existing" ]]; then
+        return 0  # 邮箱已存在
+    fi
+
+    return 1  # 邮箱可用
+}
+
 # 生成 UUID
 generate_uuid() {
     if command -v uuidgen &>/dev/null; then
@@ -12,6 +40,159 @@ generate_uuid() {
     else
         cat /proc/sys/kernel/random/uuid
     fi
+}
+
+# 显示全局用户列表（新架构）
+list_global_users() {
+    if [[ ! -f "$USERS_FILE" ]]; then
+        print_warning "用户文件不存在"
+        return 1
+    fi
+
+    local user_count=$(jq '.users | length' "$USERS_FILE" 2>/dev/null)
+    if [[ $user_count -eq 0 ]]; then
+        print_warning "没有用户"
+        return 0
+    fi
+
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════╗${NC}"
+    printf "${CYAN}║${NC} %-8s %-25s %-8s %-8s ${CYAN}║${NC}\n" "UUID" "邮箱" "等级" "状态"
+    echo -e "${CYAN}╠════════════════════════════════════════════════════════╣${NC}"
+
+    while IFS= read -r user; do
+        local uuid=$(echo "$user" | jq -r '.id')
+        local email=$(echo "$user" | jq -r '.email')
+        local level=$(echo "$user" | jq -r '.level // 0')
+        local enabled=$(echo "$user" | jq -r '.enabled // true')
+
+        local short_uuid="${uuid:0:8}..."
+        local status=""
+        if [[ "$enabled" == "true" ]]; then
+            status="${GREEN}启用${NC}"
+        else
+            status="${RED}禁用${NC}"
+        fi
+
+        printf "${CYAN}║${NC} %-8s %-25s %-8s %-8b ${CYAN}║${NC}\n" "$short_uuid" "$email" "$level" "$status"
+    done < <(jq -c '.users[]' "$USERS_FILE")
+
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}总计: ${user_count} 个用户${NC}"
+}
+
+# 添加全局用户（新架构）
+add_global_user() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      添加全局用户                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    read -p "请输入用户邮箱/备注: " email
+    while [[ -z "$email" ]]; do
+        print_error "邮箱不能为空"
+        read -p "请输入用户邮箱/备注: " email
+    done
+
+    # 检查邮箱是否已存在（全局检查）
+    if check_email_exists "$email"; then
+        print_error "用户邮箱 '$email' 已存在"
+        return 1
+    fi
+
+    # 生成UUID
+    read -p "请输入UUID [留空自动生成]: " uuid
+    if [[ -z "$uuid" ]]; then
+        uuid=$(generate_uuid)
+        print_info "自动生成 UUID: $uuid"
+    fi
+
+    # 设置用户等级
+    read -p "请输入用户等级 [默认: 0]: " level
+    level=${level:-0}
+
+    # 保存到全局用户文件
+    if [[ ! -f "$USERS_FILE" ]]; then
+        echo '{"users":[]}' > "$USERS_FILE"
+    fi
+
+    local user_data=$(jq -n \
+        --arg id "$uuid" \
+        --arg email "$email" \
+        --argjson level "$level" \
+        '{id: $id, email: $email, level: $level, created: (now|todate), enabled: true}')
+
+    jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+    print_success "全局用户添加成功！"
+    echo ""
+    echo -e "${CYAN}用户信息：${NC}"
+    echo -e "  UUID: ${YELLOW}$uuid${NC}"
+    echo -e "  邮箱: ${YELLOW}$email${NC}"
+    echo -e "  等级: ${YELLOW}$level${NC}"
+    echo ""
+
+    # 询问是否绑定到节点
+    read -p "是否立即绑定到节点? [y/N]: " bind_now
+    if [[ "$bind_now" == "y" || "$bind_now" == "Y" ]]; then
+        bind_user_to_node
+    fi
+}
+
+# 删除全局用户（新架构）
+delete_global_user() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      删除全局用户                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    list_global_users
+
+    echo ""
+    read -p "请输入要删除的用户邮箱: " email
+    if [[ -z "$email" ]]; then
+        print_error "邮箱不能为空"
+        return 1
+    fi
+
+    # 检查用户是否存在
+    local uuid=$(jq -r ".users[] | select(.email == \"$email\") | .id" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$uuid" ]]; then
+        print_error "用户不存在: $email"
+        return 1
+    fi
+
+    # 警告
+    echo ""
+    print_warning "删除用户将同时清理所有节点绑定关系"
+    read -p "确认删除用户 $email? [y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        print_info "取消删除"
+        return 0
+    fi
+
+    # 从所有节点解绑
+    if [[ -f "$NODE_USERS_FILE" ]]; then
+        jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        print_info "已清理节点绑定关系"
+    fi
+
+    # 从全局用户列表删除
+    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+    print_success "用户删除成功"
+
+    # 重新生成配置
+    generate_xray_config
+
+    # 重启服务
+    restart_xray
+
+    print_success "配置已更新并重启服务"
 }
 
 # 添加用户
@@ -41,6 +222,12 @@ add_user() {
         print_error "邮箱不能为空"
         read -p "请输入用户邮箱/备注: " email
     done
+
+    # 检查邮箱是否已存在（仅检查当前节点）
+    if check_email_exists "$email" "$port"; then
+        print_error "用户邮箱 '$email' 在端口 $port 上已存在"
+        return 1
+    fi
 
     # 根据协议生成用户配置
     case $node_protocol in
