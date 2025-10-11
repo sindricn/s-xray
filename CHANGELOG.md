@@ -1,5 +1,93 @@
 # 更新日志
 
+## [v1.3.4] - 2025-10-11
+
+### 🐛 修复：订阅链接生成逻辑（完全重写）
+
+#### 问题描述
+订阅链接生成的节点链接无效。所有链接生成函数都在尝试从nodes.json读取`.config`字段，但新架构中只保存了`protocol`, `port`, `transport`, `security`, `extra`字段。
+
+**根本原因**：数据结构不匹配 - 链接生成函数期望的数据格式与nodes.json实际保存的格式不一致。
+
+#### 修复内容
+
+**重写所有链接生成函数** (modules/subscription.sh):
+
+1. ✅ **generate_vless_reality_link_from_config()** (line 76-110)
+   - 从`extra.dest`, `extra.server_names[0]`, `extra.public_key`, `extra.short_ids[0]`, `extra.flow`提取参数
+   - 构建正确的Reality链接格式
+
+2. ✅ **generate_vless_tls_link_from_config()** (line 112-154)
+   - 从`transport`, `security`, `extra.tls_domain`, `extra.ws_path`, `extra.grpc_service`提取参数
+   - 支持WebSocket和gRPC传输协议
+
+3. ✅ **generate_vless_plain_link_from_config()** (line 156-185)
+   - 从`transport`, `extra.ws_path`, `extra.grpc_service`提取参数
+   - 生成无加密VLESS链接
+
+4. ✅ **generate_vmess_link_from_config()** (line 187-230)
+   - 从`extra.alter_id`, `extra.cipher`, `extra.ws_path`提取参数
+   - 生成Base64编码的VMess JSON配置
+
+5. ✅ **generate_trojan_link_from_config()** (line 232-254)
+   - 从`extra.tls_domain`提取SNI参数
+   - 使用用户password生成Trojan链接
+
+6. ✅ **generate_ss_link_from_config()** (line 256-276)
+   - 从`extra.cipher`提取加密方式
+   - 使用用户password生成SIP002格式SS链接
+
+7. ✅ **generate_share_link_smart()** (line 278-317)
+   - 改用`security`字段判断VLESS类型（reality/tls/none）
+   - 自动获取用户password用于Trojan/SS
+   - 移除对`.config`的依赖
+
+**修复admin用户获取** (line 505-532):
+- 替换`get_admin_uuid()`为`get_admin_user_info()`
+- 正确解析返回的`UUID|password|email`格式
+
+#### nodes.json数据结构
+
+**新架构存储格式**：
+```json
+{
+  "nodes": [
+    {
+      "protocol": "vless",
+      "port": "443",
+      "transport": "tcp",
+      "security": "reality",
+      "extra": {
+        "dest": "domain:443",
+        "server_names": ["sni"],
+        "public_key": "xxx",
+        "private_key": "xxx",
+        "short_ids": ["xxx"],
+        "flow": "xtls-rprx-vision"
+      },
+      "created": "timestamp"
+    }
+  ]
+}
+```
+
+**各协议extra字段**：
+- **Reality**: `{dest, server_names[], public_key, private_key, short_ids[], flow}`
+- **VLESS**: `{ws_path, grpc_service, tls_domain, tls_cert, tls_key}`
+- **VMess**: `{alter_id, cipher, ws_path}`
+- **Trojan**: `{tls_domain, tls_cert, tls_key, fallback_dest, fallback_port}`
+- **Shadowsocks**: `{cipher}`
+
+#### 影响范围
+
+- ✅ 订阅链接生成功能完全修复
+- ✅ 单节点链接查看功能修复
+- ✅ 所有4种协议（VLESS/VMess/Trojan/SS）支持
+- ✅ Reality/TLS/无加密 三种安全方式支持
+- ✅ WebSocket/gRPC/TCP 传输协议支持
+
+---
+
 ## [v1.3.3] - 2025-10-11
 
 ### 🐛 修复：节点创建用户绑定逻辑 + 脚本管理菜单更新

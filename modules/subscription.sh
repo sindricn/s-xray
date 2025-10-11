@@ -73,96 +73,79 @@ base64_encode() {
 # 分享链接生成函数（修复版）
 #================================================================
 
-# 从节点JSON生成VLESS Reality分享链接
+# 从节点JSON生成VLESS Reality分享链接（新架构）
 generate_vless_reality_link_from_config() {
     local uuid=$1
     local remark=$2
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local config=$(echo "$node_json" | jq -r '.config')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
-    # 解析Reality配置
-    local reality_settings=$(echo "$config" | jq -r '.streamSettings.realitySettings // empty')
-    if [[ -z "$reality_settings" || "$reality_settings" == "null" ]]; then
+    # 从extra字段提取Reality参数
+    local dest=$(echo "$extra" | jq -r '.dest // ""')
+    local server_names=$(echo "$extra" | jq -r '.server_names[0] // ""')
+    local public_key=$(echo "$extra" | jq -r '.public_key // ""')
+    local short_id=$(echo "$extra" | jq -r '.short_ids[0] // ""')
+    local flow=$(echo "$extra" | jq -r '.flow // "xtls-rprx-vision"')
+
+    # 验证必需参数
+    if [[ -z "$dest" || -z "$public_key" ]]; then
         echo ""
         return 1
     fi
 
-    # 提取Reality参数
-    local dest=$(echo "$reality_settings" | jq -r '.dest // ""')
-    local server_names=$(echo "$reality_settings" | jq -r '.serverNames[0] // ""')
-    local private_key=$(echo "$reality_settings" | jq -r '.privateKey // ""')
-    local short_ids=$(echo "$reality_settings" | jq -r '.shortIds[0] // ""')
-
-    # SNI从serverNames或dest提取
+    # SNI从server_names或dest提取
     local sni="$server_names"
     if [[ -z "$sni" && -n "$dest" ]]; then
         sni=$(echo "$dest" | cut -d':' -f1)
     fi
 
-    # 从privateKey生成publicKey（如果没有存储publicKey）
-    local public_key=""
-    if [[ -n "$private_key" ]]; then
-        # Reality的公钥需要从私钥计算得出，这里假设配置中已包含
-        # 实际应该从xray x25519命令计算
-        public_key=$(echo "$reality_settings" | jq -r '.publicKey // ""')
-
-        if [[ -z "$public_key" && -f "$XRAY_BIN" ]]; then
-            # 尝试从私钥生成公钥（需要特殊处理）
-            # 这里简化处理，实际需要xray工具
-            public_key="$private_key" # 临时方案
-        fi
-    fi
-
-    # flow参数
-    local flow=$(echo "$config" | jq -r '.settings.clients[0].flow // "xtls-rprx-vision"')
-
     local server_ip=$(get_public_ip)
 
     # 构建VLESS Reality链接
-    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=chrome&pbk=${public_key}&sid=${short_ids}&type=tcp&headerType=none#$(urlencode "$remark")"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(urlencode "$remark")"
 
     echo "$share_link"
 }
 
-# 从节点JSON生成VLESS TLS分享链接
+# 从节点JSON生成VLESS TLS分享链接（新架构）
 generate_vless_tls_link_from_config() {
     local uuid=$1
     local remark=$2
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local config=$(echo "$node_json" | jq -r '.config')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
+    local security=$(echo "$node_json" | jq -r '.security // "none"')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
-    # 解析TLS配置
-    local tls_settings=$(echo "$config" | jq -r '.streamSettings.tlsSettings // empty')
-    if [[ -z "$tls_settings" || "$tls_settings" == "null" ]]; then
-        # 没有TLS，生成普通VLESS链接
+    # 检查是否有TLS
+    if [[ "$security" != "tls" ]]; then
         generate_vless_plain_link_from_config "$uuid" "$remark" "$node_json"
         return
     fi
 
-    local sni=$(echo "$tls_settings" | jq -r '.serverName // ""')
-    local ws_path=""
+    # 从extra提取参数
+    local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
+    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
+    local grpc_service=$(echo "$extra" | jq -r '.grpc_service // ""')
 
-    if [[ "$transport" == "ws" ]]; then
-        ws_path=$(echo "$config" | jq -r '.streamSettings.wsSettings.path // ""')
-    fi
-
-    local flow=$(echo "$config" | jq -r '.settings.clients[0].flow // ""')
     local server_ip=$(get_public_ip)
 
     # 构建链接
-    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&security=tls&sni=${sni}&type=${transport}"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&security=tls&type=${transport}"
 
-    if [[ -n "$flow" ]]; then
-        share_link+="&flow=${flow}"
+    if [[ -n "$tls_domain" ]]; then
+        share_link+="&sni=${tls_domain}"
     fi
 
     if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
         share_link+="&path=$(urlencode "$ws_path")"
+    fi
+
+    if [[ "$transport" == "grpc" && -n "$grpc_service" ]]; then
+        share_link+="&serviceName=$(urlencode "$grpc_service")"
     fi
 
     share_link+="#$(urlencode "$remark")"
@@ -170,7 +153,7 @@ generate_vless_tls_link_from_config() {
     echo "$share_link"
 }
 
-# 从节点JSON生成VLESS普通分享链接
+# 从节点JSON生成VLESS普通分享链接（新架构）
 generate_vless_plain_link_from_config() {
     local uuid=$1
     local remark=$2
@@ -178,12 +161,11 @@ generate_vless_plain_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local config=$(echo "$node_json" | jq -r '.config')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
-    local ws_path=""
-    if [[ "$transport" == "ws" ]]; then
-        ws_path=$(echo "$config" | jq -r '.streamSettings.wsSettings.path // ""')
-    fi
+    # 从extra提取参数
+    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
+    local grpc_service=$(echo "$extra" | jq -r '.grpc_service // ""')
 
     local server_ip=$(get_public_ip)
 
@@ -193,12 +175,16 @@ generate_vless_plain_link_from_config() {
         share_link+="&path=$(urlencode "$ws_path")"
     fi
 
+    if [[ "$transport" == "grpc" && -n "$grpc_service" ]]; then
+        share_link+="&serviceName=$(urlencode "$grpc_service")"
+    fi
+
     share_link+="#$(urlencode "$remark")"
 
     echo "$share_link"
 }
 
-# 从节点JSON生成VMess分享链接
+# 从节点JSON生成VMess分享链接（新架构）
 generate_vmess_link_from_config() {
     local uuid=$1
     local remark=$2
@@ -206,21 +192,12 @@ generate_vmess_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local config=$(echo "$node_json" | jq -r '.config')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
-    local ws_path=""
-    local tls=""
-    local sni=""
-
-    if [[ "$transport" == "ws" ]]; then
-        ws_path=$(echo "$config" | jq -r '.streamSettings.wsSettings.path // ""')
-    fi
-
-    local security=$(echo "$config" | jq -r '.streamSettings.security // ""')
-    if [[ "$security" == "tls" ]]; then
-        tls="tls"
-        sni=$(echo "$config" | jq -r '.streamSettings.tlsSettings.serverName // ""')
-    fi
+    # 从extra提取参数
+    local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
+    local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
+    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
 
     local server_ip=$(get_public_ip)
 
@@ -232,14 +209,14 @@ generate_vmess_link_from_config() {
   "add": "${server_ip}",
   "port": "${port}",
   "id": "${uuid}",
-  "aid": "0",
-  "scy": "auto",
+  "aid": "${alter_id}",
+  "scy": "${cipher}",
   "net": "${transport}",
   "type": "none",
   "host": "",
   "path": "${ws_path}",
-  "tls": "${tls}",
-  "sni": "${sni}",
+  "tls": "",
+  "sni": "",
   "alpn": "",
   "fp": ""
 }
@@ -252,19 +229,21 @@ EOF
     echo "$vmess_link"
 }
 
-# 从节点JSON生成Trojan分享链接
+# 从节点JSON生成Trojan分享链接（新架构）
 generate_trojan_link_from_config() {
     local password=$1
     local remark=$2
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local config=$(echo "$node_json" | jq -r '.config')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
-    local sni=$(echo "$config" | jq -r '.streamSettings.tlsSettings.serverName // ""')
+    # 从extra提取参数
+    local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
     local server_ip=$(get_public_ip)
 
+    local sni="${tls_domain}"
     if [[ -z "$sni" ]]; then
         sni=$server_ip
     fi
@@ -274,16 +253,17 @@ generate_trojan_link_from_config() {
     echo "$share_link"
 }
 
-# 从节点JSON生成Shadowsocks分享链接
+# 从节点JSON生成Shadowsocks分享链接（新架构）
 generate_ss_link_from_config() {
     local password=$1
     local remark=$2
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local config=$(echo "$node_json" | jq -r '.config')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
-    local cipher=$(echo "$config" | jq -r '.settings.method // "aes-256-gcm"')
+    # 从extra提取cipher
+    local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
     local server_ip=$(get_public_ip)
 
     # SIP002格式
@@ -295,21 +275,27 @@ generate_ss_link_from_config() {
     echo "$share_link"
 }
 
-# 智能生成分享链接（根据节点类型）
+# 智能生成分享链接（根据节点类型）- 新架构
 generate_share_link_smart() {
     local user_id=$1
     local user_email=$2
     local node_json=$3
 
     local protocol=$(echo "$node_json" | jq -r '.protocol')
-    local config=$(echo "$node_json" | jq -r '.config')
+    local security=$(echo "$node_json" | jq -r '.security // "none"')
+
+    # 获取用户密码（Trojan和SS需要）
+    local user_password=""
+    if [[ "$protocol" == "trojan" || "$protocol" == "shadowsocks" ]]; then
+        user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
+    fi
 
     case $protocol in
         vless)
-            # 检查是否是Reality
-            if echo "$config" | jq -e '.streamSettings.security == "reality"' >/dev/null 2>&1; then
+            # 根据security字段判断类型
+            if [[ "$security" == "reality" ]]; then
                 generate_vless_reality_link_from_config "$user_id" "$user_email" "$node_json"
-            elif echo "$config" | jq -e '.streamSettings.security == "tls"' >/dev/null 2>&1; then
+            elif [[ "$security" == "tls" ]]; then
                 generate_vless_tls_link_from_config "$user_id" "$user_email" "$node_json"
             else
                 generate_vless_plain_link_from_config "$user_id" "$user_email" "$node_json"
@@ -319,10 +305,10 @@ generate_share_link_smart() {
             generate_vmess_link_from_config "$user_id" "$user_email" "$node_json"
             ;;
         trojan)
-            generate_trojan_link_from_config "$user_id" "$user_email" "$node_json"
+            generate_trojan_link_from_config "$user_password" "$user_email" "$node_json"
             ;;
         shadowsocks)
-            generate_ss_link_from_config "$user_id" "$user_email" "$node_json"
+            generate_ss_link_from_config "$user_password" "$user_email" "$node_json"
             ;;
         *)
             echo ""
@@ -491,9 +477,6 @@ generate_subscription_with_user() {
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
 
-    # 初始化admin用户
-    init_admin_user
-
     if [[ ! -f "$NODES_FILE" ]]; then
         print_error "暂无节点，请先添加节点"
         return 1
@@ -520,20 +503,33 @@ generate_subscription_with_user() {
     local sub_user_email=""
 
     if [[ "$user_choice" == "1" ]]; then
-        sub_user_id=$(get_admin_uuid)
-        sub_user_email="admin"
+        # 获取admin用户信息
+        local admin_info=$(get_admin_user_info)
+        if [[ $? -ne 0 ]]; then
+            print_error "无法获取admin用户信息"
+            return 1
+        fi
+        IFS='|' read -r sub_user_id sub_user_password sub_user_email <<< "$admin_info"
     else
         # 显示用户列表
         if [[ ! -f "$USERS_FILE" ]]; then
             print_warning "暂无用户，使用admin用户"
-            sub_user_id=$(get_admin_uuid)
-            sub_user_email="admin"
+            local admin_info=$(get_admin_user_info)
+            if [[ $? -ne 0 ]]; then
+                print_error "无法获取admin用户信息"
+                return 1
+            fi
+            IFS='|' read -r sub_user_id sub_user_password sub_user_email <<< "$admin_info"
         else
             local user_count=$(jq -r '.users | length' "$USERS_FILE")
             if [[ "$user_count" -eq 0 ]]; then
                 print_warning "暂无用户，使用admin用户"
-                sub_user_id=$(get_admin_uuid)
-                sub_user_email="admin"
+                local admin_info=$(get_admin_user_info)
+                if [[ $? -ne 0 ]]; then
+                    print_error "无法获取admin用户信息"
+                    return 1
+                fi
+                IFS='|' read -r sub_user_id sub_user_password sub_user_email <<< "$admin_info"
             else
                 echo ""
                 echo -e "${YELLOW}用户列表：${NC}"
