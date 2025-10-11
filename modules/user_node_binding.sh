@@ -18,16 +18,16 @@ bind_user_to_node() {
     list_global_users
 
     echo ""
-    read -p "请输入用户邮箱: " email
-    if [[ -z "$email" ]]; then
-        print_error "邮箱不能为空"
+    read -p "请输入用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
         return 1
     fi
 
     # 获取用户UUID
-    local uuid=$(jq -r ".users[] | select(.email == \"$email\") | .id" "$USERS_FILE" 2>/dev/null)
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
     if [[ -z "$uuid" ]]; then
-        print_error "用户不存在: $email"
+        print_error "用户不存在: $username"
         return 1
     fi
 
@@ -99,16 +99,16 @@ unbind_user_from_node() {
     show_user_node_bindings
 
     echo ""
-    read -p "请输入用户邮箱: " email
-    if [[ -z "$email" ]]; then
-        print_error "邮箱不能为空"
+    read -p "请输入用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
         return 1
     fi
 
     # 获取用户UUID
-    local uuid=$(jq -r ".users[] | select(.email == \"$email\") | .id" "$USERS_FILE" 2>/dev/null)
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
     if [[ -z "$uuid" ]]; then
-        print_error "用户不存在: $email"
+        print_error "用户不存在: $username"
         return 1
     fi
 
@@ -171,9 +171,9 @@ show_user_node_bindings() {
             echo -e "  ${YELLOW}无绑定用户${NC}"
         else
             while IFS= read -r uuid; do
-                local email=$(jq -r ".users[] | select(.id == \"$uuid\") | .email" "$USERS_FILE" 2>/dev/null)
-                if [[ -n "$email" ]]; then
-                    echo -e "  ${CYAN}•${NC} $email (${uuid:0:8}...)"
+                local username=$(jq -r ".users[] | select(.id == \"$uuid\") | .username" "$USERS_FILE" 2>/dev/null)
+                if [[ -n "$username" ]]; then
+                    echo -e "  ${CYAN}•${NC} $username (${uuid:0:8}...)"
                 fi
             done <<< "$users"
         fi
@@ -193,16 +193,16 @@ show_user_nodes() {
     list_global_users
 
     echo ""
-    read -p "请输入用户邮箱: " email
-    if [[ -z "$email" ]]; then
-        print_error "邮箱不能为空"
+    read -p "请输入用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
         return 1
     fi
 
     # 获取用户UUID
-    local uuid=$(jq -r ".users[] | select(.email == \"$email\") | .id" "$USERS_FILE" 2>/dev/null)
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
     if [[ -z "$uuid" ]]; then
-        print_error "用户不存在: $email"
+        print_error "用户不存在: $username"
         return 1
     fi
 
@@ -279,7 +279,8 @@ show_node_users() {
     while IFS= read -r uuid; do
         local user=$(jq -r ".users[] | select(.id == \"$uuid\")" "$USERS_FILE" 2>/dev/null)
         if [[ -n "$user" && "$user" != "null" ]]; then
-            local email=$(echo "$user" | jq -r '.email')
+            local username=$(echo "$user" | jq -r '.username // "未设置"')
+            local password=$(echo "$user" | jq -r '.password // "无"')
             local level=$(echo "$user" | jq -r '.level // 0')
             local enabled=$(echo "$user" | jq -r '.enabled // true')
 
@@ -290,7 +291,8 @@ show_node_users() {
                 status_text="${RED}禁用${NC}"
             fi
 
-            echo -e "${CYAN}•${NC} $email"
+            echo -e "${CYAN}•${NC} 用户名: $username"
+            echo -e "  密码: $password"
             echo -e "  UUID: ${uuid:0:8}...${uuid: -8}"
             echo -e "  等级: $level"
             echo -e "  状态: $status_text"
@@ -312,16 +314,16 @@ batch_bind_user_to_nodes() {
     list_global_users
 
     echo ""
-    read -p "请输入用户邮箱: " email
-    if [[ -z "$email" ]]; then
-        print_error "邮箱不能为空"
+    read -p "请输入用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
         return 1
     fi
 
     # 获取用户UUID
-    local uuid=$(jq -r ".users[] | select(.email == \"$email\") | .id" "$USERS_FILE" 2>/dev/null)
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
     if [[ -z "$uuid" ]]; then
-        print_error "用户不存在: $email"
+        print_error "用户不存在: $username"
         return 1
     fi
 

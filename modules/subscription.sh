@@ -6,42 +6,21 @@
 # 修复：订阅链接生成逻辑、用户绑定、admin默认用户
 #================================================================
 
-# 初始化admin默认用户
-init_admin_user() {
-    if [[ ! -f "$USERS_FILE" ]]; then
-        echo '{"users":[]}' > "$USERS_FILE"
+# 获取admin用户信息
+# 返回格式: UUID|password|email
+get_admin_user_info() {
+    local admin_user=$(jq -r '.users[] | select(.username == "admin")' "$USERS_FILE" 2>/dev/null)
+
+    if [[ -z "$admin_user" || "$admin_user" == "null" ]]; then
+        print_error "admin用户不存在，请先初始化系统"
+        return 1
     fi
 
-    # 检查是否已存在admin用户
-    local admin_exists=$(jq -r '.users[] | select(.email == "admin") | .email' "$USERS_FILE" 2>/dev/null)
+    local admin_uuid=$(echo "$admin_user" | jq -r '.id')
+    local admin_password=$(echo "$admin_user" | jq -r '.password // ""')
+    local admin_email=$(echo "$admin_user" | jq -r '.email // "admin@system"')
 
-    if [[ -z "$admin_exists" ]]; then
-        local admin_uuid=$(generate_uuid)
-
-        # 创建admin用户记录
-        local admin_user=$(jq -n \
-            --arg uuid "$admin_uuid" \
-            --arg email "admin" \
-            '{id: $uuid, email: $email, level: 0, created: now|todate, is_admin: true}')
-
-        jq ".users += [$admin_user]" "$USERS_FILE" > "${USERS_FILE}.tmp"
-        mv "${USERS_FILE}.tmp" "$USERS_FILE"
-
-        log_info "已初始化admin默认用户 (UUID: $admin_uuid)"
-    fi
-}
-
-# 获取admin用户UUID
-get_admin_uuid() {
-    local admin_uuid=$(jq -r '.users[] | select(.email == "admin") | .id' "$USERS_FILE" 2>/dev/null)
-
-    if [[ -z "$admin_uuid" ]]; then
-        # 如果不存在，初始化admin用户
-        init_admin_user
-        admin_uuid=$(jq -r '.users[] | select(.email == "admin") | .id' "$USERS_FILE" 2>/dev/null)
-    fi
-
-    echo "$admin_uuid"
+    echo "$admin_uuid|$admin_password|$admin_email"
 }
 
 # 获取公网IP

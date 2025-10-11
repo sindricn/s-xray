@@ -1,5 +1,96 @@
 # 更新日志
 
+## [v1.3.2] - 2025-10-11
+
+### 🔧 用户管理优化和卸载功能增强
+
+#### 核心改进
+- ✅ **Username作为主键** - 用户名成为唯一标识符,不再依赖email
+- ✅ **Email变为可选** - email不再是必填项,默认为username@local
+- ✅ **显示优化** - 用户列表显示username/password而非UUID/email
+- ✅ **三级卸载** - 提供脚本、脚本+配置、完全卸载三个选项
+
+#### 用户管理改进（modules/user.sh）
+
+**数据结构调整**：
+```json
+{
+  "users": [
+    {
+      "id": "uuid",
+      "username": "admin",        // ← 主键,唯一且必填
+      "password": "password",     // ← 必填
+      "email": "admin@local",     // ← 可选,默认username@local
+      "level": 0,
+      "enabled": true
+    }
+  ]
+}
+```
+
+**函数修改**：
+- `list_global_users()` - 显示username/password/UUID/状态
+  - 表格宽度调整适应新字段
+  - Password显示限制在16字符(超出显示...)
+  - 移除email和level列
+
+- `add_global_user()` - 用户名成为主键
+  - username: 必填且唯一检查
+  - password: 必填(留空自动生成)
+  - email: 可选(默认username@local)
+  - UUID: 自动生成(不再询问用户)
+
+#### 用户关联修正（modules/user_node_binding.sh）
+
+**所有函数改为username关联**：
+- `bind_user_to_node()` - 输入username而非email
+- `unbind_user_from_node()` - 通过username查找用户
+- `show_user_nodes()` - 通过username显示节点
+- `show_node_users()` - 显示username/password信息
+- `batch_bind_user_to_nodes()` - 批量操作使用username
+
+#### 订阅管理修正（modules/subscription.sh）
+
+**get_admin_user_info()** - 修改admin查找逻辑:
+```bash
+# 旧: select(.email == "admin")
+# 新: select(.username == "admin")
+```
+
+#### 卸载功能增强（uninstall.sh）
+
+**三级卸载选项**：
+1. **仅卸载脚本** - 删除/opt/s-xray,保留Xray核心和所有配置
+2. **卸载脚本和配置** - 删除脚本+data目录+config.json,保留Xray核心
+3. **完全卸载** - 停止服务+删除Xray核心+删除所有配置+可选清理防火墙
+
+**实现逻辑**：
+```bash
+case $uninstall_level in
+    1) UNINSTALL_LEVEL="script" ;;
+    2) UNINSTALL_LEVEL="script_config" ;;
+    3) UNINSTALL_LEVEL="full" ;;
+esac
+
+# 级别1执行后exit 0
+# 级别2执行后exit 0
+# 级别3执行完整卸载流程
+```
+
+#### 影响范围 📊
+
+**数据兼容性**：
+- ✅ 现有users.json需要确保有username字段
+- ✅ Email可为空或任意值
+- ✅ 所有用户查询改为username-based
+
+**功能影响**：
+- ✅ 用户绑定操作全部改为username输入
+- ✅ 用户显示更直观(username/password优先)
+- ✅ 卸载更灵活(三级选项)
+
+---
+
 ## [v1.3.1] - 2025-10-11
 
 ### 🔧 重要修正：快速搭建流程优化

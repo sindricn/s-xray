@@ -95,17 +95,22 @@ list_global_users() {
         return 0
     fi
 
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════╗${NC}"
-    printf "${CYAN}║${NC} %-8s %-25s %-8s %-8s ${CYAN}║${NC}\n" "UUID" "邮箱" "等级" "状态"
-    echo -e "${CYAN}╠════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
+    printf "${CYAN}║${NC} %-15s %-18s %-20s %-8s ${CYAN}║${NC}\n" "用户名" "密码" "UUID" "状态"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════╣${NC}"
 
     while IFS= read -r user; do
+        local username=$(echo "$user" | jq -r '.username // "未设置"')
+        local password=$(echo "$user" | jq -r '.password // "无"')
         local uuid=$(echo "$user" | jq -r '.id')
-        local email=$(echo "$user" | jq -r '.email')
-        local level=$(echo "$user" | jq -r '.level // 0')
         local enabled=$(echo "$user" | jq -r '.enabled // true')
 
-        local short_uuid="${uuid:0:8}..."
+        local short_uuid="${uuid:0:16}..."
+        local short_password="${password:0:16}"
+        if [[ ${#password} -gt 16 ]]; then
+            short_password="${password:0:13}..."
+        fi
+
         local status=""
         if [[ "$enabled" == "true" ]]; then
             status="${GREEN}启用${NC}"
@@ -113,10 +118,10 @@ list_global_users() {
             status="${RED}禁用${NC}"
         fi
 
-        printf "${CYAN}║${NC} %-8s %-25s %-8s %-8b ${CYAN}║${NC}\n" "$short_uuid" "$email" "$level" "$status"
+        printf "${CYAN}║${NC} %-15s %-18s %-20s %-8b ${CYAN}║${NC}\n" "$username" "$short_password" "$short_uuid" "$status"
     done < <(jq -c '.users[]' "$USERS_FILE")
 
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
     echo -e "${CYAN}总计: ${user_count} 个用户${NC}"
 }
 
@@ -151,24 +156,13 @@ add_global_user() {
         print_info "自动生成密码: $password"
     fi
 
-    # 输入邮箱
-    read -p "请输入用户邮箱/备注: " email
-    while [[ -z "$email" ]]; do
-        print_error "邮箱不能为空"
-        read -p "请输入用户邮箱/备注: " email
-    done
+    # 生成UUID（自动，不再询问用户）
+    uuid=$(generate_uuid)
 
-    # 检查邮箱是否已存在（全局检查）
-    if check_email_exists "$email"; then
-        print_error "用户邮箱 '$email' 已存在"
-        return 1
-    fi
-
-    # 生成UUID
-    read -p "请输入UUID [留空自动生成]: " uuid
-    if [[ -z "$uuid" ]]; then
-        uuid=$(generate_uuid)
-        print_info "自动生成 UUID: $uuid"
+    # 输入邮箱（可选）
+    read -p "请输入用户邮箱/备注 [可选]: " email
+    if [[ -z "$email" ]]; then
+        email="${username}@local"  # 默认使用username@local
     fi
 
     # 设置用户等级
