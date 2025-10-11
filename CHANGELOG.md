@@ -1,5 +1,208 @@
 # 更新日志
 
+## [v1.3.5] - 2025-10-11
+
+### 🐛 修复：Admin用户显示问题
+
+#### 问题描述
+在节点链接和订阅链接中，admin用户显示为"admin@system"而不是"admin"。
+
+**根本原因**：
+1. 链接生成函数使用email字段作为备注名称（显示"admin@system"）
+2. `bind_admin_to_node()`和`get_admin_user_info()`返回email而不是username
+
+#### 修复内容
+
+**说明**：email字段保持邮箱格式（"admin@system"），修复方式是改用username字段作为链接备注。
+
+**modules/subscription.sh**:
+- Line 19-23: `get_admin_user_info()`改为返回`UUID|password|username`（原为`UUID|password|email`）
+- **关键改动**：链接生成改用username字段而不是email字段作为备注名称
+
+**modules/node.sh**:
+- Line 53-77: `bind_admin_to_node()`改为返回`UUID|password|username`（原为`UUID|password|email`）
+- Line 430, 586, 683, 774, 846: 批量替换所有`admin_email`变量名为`admin_remark`
+- **关键改动**：所有节点创建函数从读取email字段改为读取username字段作为链接备注
+
+**影响范围**：
+- ✅ VLESS Reality节点创建和链接生成
+- ✅ VLESS TLS节点创建和链接生成
+- ✅ VMess节点创建和链接生成
+- ✅ Trojan节点创建和链接生成
+- ✅ Shadowsocks节点创建和链接生成
+- ✅ 订阅链接生成
+
+**结果**：
+- Admin用户在所有链接中显示为"admin"
+- 用户绑定逻辑保持一致性
+- 链接备注名称更清晰易读
+
+---
+
+### ✨ 新增：Clash订阅格式支持
+
+#### 功能描述
+添加Clash YAML格式订阅支持，为Clash系列客户端（Clash for Windows、ClashX、Clash Verge等）提供原生配置格式。
+
+#### 实现内容
+
+**modules/subscription.sh**:
+
+1. **generate_clash_config()** (Line 323-481)
+   - 生成完整的Clash YAML配置
+   - 支持的协议：
+     - ✅ VLESS (TLS/Plain) - Reality不支持（Clash限制）
+     - ✅ VMess (自动/WebSocket)
+     - ✅ Trojan (TLS)
+     - ✅ Shadowsocks (多种加密方式)
+
+   - 配置特性：
+     - 代理端口：7890 (HTTP), 7891 (SOCKS5)
+     - 外部控制：127.0.0.1:9090
+     - 代理组：PROXY（手动选择）、AUTO（自动测速）
+     - 路由规则：局域网直连、中国IP/域名直连、其他代理
+
+2. **订阅类型菜单** (Line 743-749)
+   - 选项1：通用订阅（Base64编码）
+   - 选项2：原始订阅（纯文本）
+   - 选项3：Clash订阅（YAML格式）**← 新增**
+
+3. **订阅生成集成** (Line 834-848)
+   - 收集用户绑定的节点JSON数组
+   - 调用`generate_clash_config()`生成YAML
+   - 保存为`${sub_name}_clash.yaml`
+
+**使用场景**：
+- Clash for Windows用户导入YAML配置
+- ClashX Pro用户使用订阅链接
+- Clash Verge用户自动更新配置
+- 需要策略组和规则分流的场景
+
+**配置示例**：
+```yaml
+port: 7890
+socks-port: 7891
+proxies:
+  - name: "VLESS-443"
+    type: vless
+    server: 1.2.3.4
+    port: 443
+    uuid: xxx
+    tls: true
+  - name: "VMess-10086"
+    type: vmess
+    server: 1.2.3.4
+    port: 10086
+    uuid: xxx
+    alterId: 0
+    cipher: auto
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies: [...]
+  - name: AUTO
+    type: url-test
+    proxies: [...]
+```
+
+---
+
+### 🐛 修复：用户管理函数适配新架构
+
+#### 问题描述
+用户管理相关函数（查看、修改、删除）仍在使用旧的数据结构字段，导致功能异常。
+
+**具体问题**：
+1. `list_users()` - 尝试从users.json读取不存在的`port`和`protocol`字段
+2. `modify_user()` - 使用port查询用户（错误），应使用username
+3. `delete_global_user()` - 使用email查询用户，应使用username
+
+#### 修复内容
+
+**modules/user.sh**:
+
+1. ✅ **list_users()** (Line 362-390)
+   ```bash
+   # 修改前：读取错误的字段
+   local users=$(jq -r '.users[] | "\(.port)|\(.protocol)|\(.id)|\(.email)|\(.created)"'
+
+   # 修改后：读取正确的字段
+   local users=$(jq -r '.users[] | "\(.username)|\(.id)|\(.password)|\(.email)|\(.enabled)|\(.created)"'
+   ```
+   - 新增显示列：用户名、UUID、密码、邮箱、状态（启用/禁用）、创建时间
+   - 移除错误的端口和协议列
+
+2. ✅ **modify_user()** (Line 392-473)
+   ```bash
+   # 修改前：使用port和email查询
+   read -p "请输入要修改用户的节点端口: " port
+   read -p "请输入用户邮箱: " email
+   local user_info=$(jq -r ".users[] | select(.port == \"$port\" and .email == \"$email\")"
+
+   # 修改后：使用username查询
+   read -p "请输入要修改的用户名: " username
+   local user_info=$(jq -r ".users[] | select(.username == \"$username\")"
+   ```
+   - 修改选项：
+     - 选项1：修改邮箱（直接更新users.json，调用regenerate_config）
+     - 选项2：修改密码（直接更新users.json，调用regenerate_config）
+     - 选项3：重置UUID（生成新UUID，更新users.json，调用regenerate_config）
+     - 选项4：切换启用/禁用状态（新增功能）
+   - 移除对废弃辅助函数的调用（update_user_email, update_user_id, update_user_level）
+   - 所有修改操作后调用`regenerate_config`重新生成config.json
+
+3. ✅ **delete_global_user()** (Line 206-258)
+   ```bash
+   # 修改前：使用email查询和删除
+   read -p "请输入要删除的用户邮箱: " email
+   local uuid=$(jq -r ".users[] | select(.email == \"$email\") | .id"
+
+   # 修改后：使用username查询和删除
+   read -p "请输入要删除的用户名: " username
+   local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id"
+   ```
+   - 保持原有逻辑：先从node_users.json清理绑定，再从users.json删除用户
+   - 删除后调用`generate_xray_config`和`restart_xray`
+
+4. ✅ **验证正确的函数** (已确认无需修改)
+   - `list_global_users()` (Line 86-126) - 正确显示username, password, uuid, status
+   - `add_global_user()` (Line 128-203) - 正确使用username, password, email字段
+
+#### 数据结构说明
+
+**users.json 结构**（保持不变）：
+```json
+{
+  "users": [
+    {
+      "id": "uuid",
+      "username": "admin",
+      "password": "password123",
+      "email": "admin",
+      "level": 0,
+      "created": "2025-10-11T10:00:00Z",
+      "enabled": true
+    }
+  ]
+}
+```
+
+**注意事项**：
+- email字段保留但不作为主要查询字段
+- username是唯一标识，用于所有查询和修改操作
+- 新架构中用户与节点通过node_users.json绑定，users.json中不包含port/protocol字段
+
+**影响范围**：
+- ✅ 用户管理菜单 → 查看用户列表（功能正常）
+- ✅ 用户管理菜单 → 修改用户（功能正常）
+- ✅ 全局用户管理 → 添加全局用户（功能正常）
+- ✅ 全局用户管理 → 删除全局用户（功能正常）
+
+**已知限制**：
+- `add_user()` 和 `delete_user()` 函数（主菜单选项11和12标注为"旧版功能"）仍然使用旧架构逻辑，建议使用新架构的全局用户管理功能
+
+---
+
 ## [v1.3.4] - 2025-10-11
 
 ### 🐛 修复：订阅链接生成逻辑（完全重写）

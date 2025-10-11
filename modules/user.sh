@@ -60,7 +60,7 @@ init_admin_user() {
     # 创建admin用户
     local admin_uuid=$(generate_uuid)
     local admin_password=$(openssl rand -base64 16 | tr -d '/+=' | cut -c1-16)
-    local admin_email="admin@system"
+    local admin_email="admin@system"  # 保持邮箱格式
 
     local admin_data=$(jq -n \
         --arg id "$admin_uuid" \
@@ -213,23 +213,23 @@ delete_global_user() {
     list_global_users
 
     echo ""
-    read -p "请输入要删除的用户邮箱: " email
-    if [[ -z "$email" ]]; then
-        print_error "邮箱不能为空"
+    read -p "请输入要删除的用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
         return 1
     fi
 
     # 检查用户是否存在
-    local uuid=$(jq -r ".users[] | select(.email == \"$email\") | .id" "$USERS_FILE" 2>/dev/null)
-    if [[ -z "$uuid" ]]; then
-        print_error "用户不存在: $email"
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$uuid" || "$uuid" == "null" ]]; then
+        print_error "用户不存在: $username"
         return 1
     fi
 
     # 警告
     echo ""
     print_warning "删除用户将同时清理所有节点绑定关系"
-    read -p "确认删除用户 $email? [y/N]: " confirm
+    read -p "确认删除用户 $username? [y/N]: " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         print_info "取消删除"
         return 0
@@ -368,20 +368,24 @@ list_users() {
         return 0
     fi
 
-    local users=$(jq -r '.users[] | "\(.port)|\(.protocol)|\(.id)|\(.email)|\(.created)"' "$USERS_FILE" 2>/dev/null)
+    local users=$(jq -r '.users[] | "\(.username)|\(.id)|\(.password)|\(.email)|\(.enabled)|\(.created)"' "$USERS_FILE" 2>/dev/null)
 
     if [[ -z "$users" ]]; then
         print_warning "暂无用户"
         return 0
     fi
 
-    printf "%-10s %-15s %-40s %-20s %-20s\n" "端口" "协议" "ID/密码" "邮箱" "创建时间"
-    echo "------------------------------------------------------------------------------------------------------------------------"
+    printf "%-15s %-38s %-18s %-20s %-8s %-20s\n" "用户名" "UUID" "密码" "邮箱" "状态" "创建时间"
+    echo "-------------------------------------------------------------------------------------------------------------------------------"
 
-    while IFS='|' read -r port protocol id email created; do
-        # 截断过长的ID
+    while IFS='|' read -r username id password email enabled created; do
+        # 截断过长的UUID
         local short_id="${id:0:36}"
-        printf "%-10s %-15s %-40s %-20s %-20s\n" "$port" "$protocol" "$short_id" "$email" "${created:0:19}"
+        # 状态显示
+        local status_text="启用"
+        [[ "$enabled" == "false" ]] && status_text="禁用"
+
+        printf "%-15s %-38s %-18s %-20s %-8s %-20s\n" "$username" "$short_id" "$password" "$email" "$status_text" "${created:0:19}"
     done <<< "$users"
 }
 
@@ -392,22 +396,17 @@ modify_user() {
 
     list_users
 
-    read -p "请输入要修改用户的节点端口: " port
-    if [[ -z "$port" ]]; then
-        print_error "端口不能为空"
-        return 1
-    fi
-
-    read -p "请输入用户邮箱: " email
-    if [[ -z "$email" ]]; then
-        print_error "邮箱不能为空"
+    echo ""
+    read -p "请输入要修改的用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
         return 1
     fi
 
     # 获取用户信息
-    local user_info=$(jq -r ".users[] | select(.port == \"$port\" and .email == \"$email\")" "$USERS_FILE" 2>/dev/null)
-    if [[ -z "$user_info" ]]; then
-        print_error "用户不存在"
+    local user_info=$(jq -r ".users[] | select(.username == \"$username\")" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$user_info" || "$user_info" == "null" ]]; then
+        print_error "用户 $username 不存在"
         return 1
     fi
 
@@ -415,46 +414,54 @@ modify_user() {
     echo "$user_info" | jq .
 
     echo -e "\n${CYAN}修改选项：${NC}"
-    echo "1. 修改邮箱/备注"
-    echo "2. 重置UUID/密码"
-    echo "3. 修改用户等级"
+    echo "1. 修改邮箱"
+    echo "2. 修改密码"
+    echo "3. 重置UUID"
+    echo "4. 切换启用/禁用状态"
     echo "0. 返回"
-    read -p "请选择 [0-3]: " choice
+    read -p "请选择 [0-4]: " choice
 
     case $choice in
         1)
-            read -p "请输入新的邮箱/备注: " new_email
+            read -p "请输入新的邮箱: " new_email
             if [[ -n "$new_email" ]]; then
-                update_user_email "$port" "$email" "$new_email"
+                jq ".users |= map(if .username == \"$username\" then .email = \"$new_email\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "邮箱修改成功"
+                regenerate_config
             fi
             ;;
         2)
-            local protocol=$(echo "$user_info" | jq -r '.protocol')
-            case $protocol in
-                vless|vmess)
-                    local new_uuid=$(generate_uuid)
-                    print_info "新 UUID: $new_uuid"
-                    update_user_id "$port" "$email" "$new_uuid"
-                    print_success "UUID 重置成功"
-                    ;;
-                trojan|shadowsocks)
-                    read -p "请输入新密码: " new_password
-                    if [[ -n "$new_password" ]]; then
-                        update_user_id "$port" "$email" "$new_password"
-                        print_success "密码修改成功"
-                    fi
-                    ;;
-            esac
+            read -p "请输入新密码: " new_password
+            if [[ -n "$new_password" ]]; then
+                jq ".users |= map(if .username == \"$username\" then .password = \"$new_password\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                mv "${USERS_FILE}.tmp" "$USERS_FILE"
+                print_success "密码修改成功"
+                regenerate_config
+            fi
             ;;
         3)
-            read -p "请输入新的用户等级 [0-10]: " new_level
-            if [[ "$new_level" =~ ^[0-9]+$ && "$new_level" -ge 0 && "$new_level" -le 10 ]]; then
-                update_user_level "$port" "$email" "$new_level"
-                print_success "用户等级修改成功"
+            local new_uuid=$(generate_uuid)
+            print_info "新 UUID: $new_uuid"
+            jq ".users |= map(if .username == \"$username\" then .id = \"$new_uuid\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
+            print_success "UUID 重置成功"
+            regenerate_config
+            ;;
+        4)
+            local current_enabled=$(echo "$user_info" | jq -r '.enabled')
+            local new_enabled="true"
+            [[ "$current_enabled" == "true" ]] && new_enabled="false"
+
+            jq ".users |= map(if .username == \"$username\" then .enabled = $new_enabled else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+            if [[ "$new_enabled" == "true" ]]; then
+                print_success "用户已启用"
             else
-                print_error "无效的等级"
+                print_success "用户已禁用"
             fi
+            regenerate_config
             ;;
         0)
             return 0
@@ -463,8 +470,6 @@ modify_user() {
             print_error "无效选择"
             ;;
     esac
-
-    restart_xray
 }
 
 # 添加用户到节点配置

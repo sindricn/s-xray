@@ -52,7 +52,7 @@ bind_admin_to_node() {
 
     local admin_uuid=$(echo "$admin_user" | jq -r '.id')
     local admin_password=$(echo "$admin_user" | jq -r '.password')
-    local admin_email=$(echo "$admin_user" | jq -r '.email')
+    local admin_username=$(echo "$admin_user" | jq -r '.username')
 
     # 自动绑定admin用户到节点
     if [[ ! -f "$NODE_USERS_FILE" ]]; then
@@ -73,7 +73,8 @@ bind_admin_to_node() {
     fi
 
     # 返回admin用户信息（用于后续生成分享链接）
-    echo "$admin_uuid|$admin_password|$admin_email"
+    # 格式: UUID|password|username
+    echo "$admin_uuid|$admin_password|$admin_username"
     return 0
 }
 
@@ -426,7 +427,7 @@ quick_add_vless_reality() {
         return 1
     fi
 
-    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+    IFS='|' read -r admin_uuid admin_password admin_remark <<< "$admin_info"
 
     # 重新生成Xray配置文件
     generate_xray_config
@@ -454,7 +455,7 @@ quick_add_vless_reality() {
     echo ""
 
     # 生成并显示分享链接
-    generate_vless_reality_share "$admin_uuid" "$admin_email" "$port" "$dest_server" "$server_names" "$public_key" "$short_id"
+    generate_vless_reality_share "$admin_uuid" "$admin_remark" "$port" "$dest_server" "$server_names" "$public_key" "$short_id"
 
     echo ""
     echo -e "${GREEN}✅ 节点创建完成并已绑定admin用户！${NC}"
@@ -582,7 +583,7 @@ add_vless_node() {
         return 1
     fi
 
-    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+    IFS='|' read -r admin_uuid admin_password admin_remark <<< "$admin_info"
 
     # 重新生成完整配置
     generate_xray_config
@@ -598,7 +599,7 @@ add_vless_node() {
     echo ""
 
     # 生成并显示VLESS分享链接
-    generate_vless_share_link "$admin_uuid" "$admin_email" "$port" "$transport" "$ws_path" "$tls_domain"
+    generate_vless_share_link "$admin_uuid" "$admin_remark" "$port" "$transport" "$ws_path" "$tls_domain"
 
     echo ""
     print_success "✅ 节点创建完成并已绑定admin用户！"
@@ -679,7 +680,7 @@ add_vmess_node() {
         return 1
     fi
 
-    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+    IFS='|' read -r admin_uuid admin_password admin_remark <<< "$admin_info"
 
     # 重新生成完整配置
     generate_xray_config
@@ -697,7 +698,7 @@ add_vmess_node() {
     echo ""
 
     # 生成并显示VMess分享链接
-    generate_vmess_share_link "$admin_uuid" "$admin_email" "$port" "$transport" "$ws_path" "$alter_id" "$cipher"
+    generate_vmess_share_link "$admin_uuid" "$admin_remark" "$port" "$transport" "$ws_path" "$alter_id" "$cipher"
 
     echo ""
     print_success "✅ 节点创建完成并已绑定admin用户！"
@@ -770,7 +771,7 @@ add_trojan_node() {
         return 1
     fi
 
-    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+    IFS='|' read -r admin_uuid admin_password admin_remark <<< "$admin_info"
 
     # 重新生成完整配置
     generate_xray_config
@@ -842,7 +843,7 @@ add_shadowsocks_node() {
         return 1
     fi
 
-    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+    IFS='|' read -r admin_uuid admin_password admin_remark <<< "$admin_info"
 
     # 重新生成完整配置
     generate_xray_config

@@ -7,7 +7,7 @@
 #================================================================
 
 # 获取admin用户信息
-# 返回格式: UUID|password|email
+# 返回格式: UUID|password|username
 get_admin_user_info() {
     local admin_user=$(jq -r '.users[] | select(.username == "admin")' "$USERS_FILE" 2>/dev/null)
 
@@ -18,9 +18,9 @@ get_admin_user_info() {
 
     local admin_uuid=$(echo "$admin_user" | jq -r '.id')
     local admin_password=$(echo "$admin_user" | jq -r '.password // ""')
-    local admin_email=$(echo "$admin_user" | jq -r '.email // "admin@system"')
+    local admin_username=$(echo "$admin_user" | jq -r '.username // "admin"')
 
-    echo "$admin_uuid|$admin_password|$admin_email"
+    echo "$admin_uuid|$admin_password|$admin_username"
 }
 
 # 获取公网IP
@@ -317,6 +317,170 @@ generate_share_link_smart() {
 }
 
 #================================================================
+# Clash配置生成函数
+#================================================================
+
+# 生成Clash YAML完整配置
+generate_clash_config() {
+    local nodes_array="$1"  # JSON数组格式的节点列表
+    local user_id="$2"
+    local user_password="$3"
+
+    local server_ip=$(get_public_ip)
+
+    # Clash YAML头部
+    cat <<EOF
+port: 7890
+socks-port: 7891
+allow-lan: false
+mode: Rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+proxies:
+EOF
+
+    # 生成每个节点的配置
+    echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
+        local protocol=$(echo "$node" | jq -r '.protocol')
+        local port=$(echo "$node" | jq -r '.port')
+        local security=$(echo "$node" | jq -r '.security // "none"')
+        local transport=$(echo "$node" | jq -r '.transport // "tcp"')
+        local extra=$(echo "$node" | jq -r '.extra')
+
+        case $protocol in
+            vless)
+                if [[ "$security" == "reality" ]]; then
+                    # Clash暂不支持Reality，跳过
+                    continue
+                elif [[ "$security" == "tls" ]]; then
+                    local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
+                    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
+                    echo "  - name: \"VLESS-${port}\""
+                    echo "    type: vless"
+                    echo "    server: ${server_ip}"
+                    echo "    port: ${port}"
+                    echo "    uuid: ${user_id}"
+                    echo "    cipher: none"
+                    echo "    tls: true"
+                    [[ -n "$tls_domain" ]] && echo "    servername: ${tls_domain}"
+                    if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
+                        echo "    network: ws"
+                        echo "    ws-opts:"
+                        echo "      path: ${ws_path}"
+                    fi
+                else
+                    echo "  - name: \"VLESS-${port}\""
+                    echo "    type: vless"
+                    echo "    server: ${server_ip}"
+                    echo "    port: ${port}"
+                    echo "    uuid: ${user_id}"
+                    echo "    cipher: none"
+                fi
+                ;;
+            vmess)
+                local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
+                local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
+                local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
+                echo "  - name: \"VMess-${port}\""
+                echo "    type: vmess"
+                echo "    server: ${server_ip}"
+                echo "    port: ${port}"
+                echo "    uuid: ${user_id}"
+                echo "    alterId: ${alter_id}"
+                echo "    cipher: ${cipher}"
+                if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
+                    echo "    network: ws"
+                    echo "    ws-opts:"
+                    echo "      path: ${ws_path}"
+                fi
+                ;;
+            trojan)
+                local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
+                echo "  - name: \"Trojan-${port}\""
+                echo "    type: trojan"
+                echo "    server: ${server_ip}"
+                echo "    port: ${port}"
+                echo "    password: ${user_password}"
+                [[ -n "$tls_domain" ]] && echo "    sni: ${tls_domain}"
+                ;;
+            shadowsocks)
+                local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
+                echo "  - name: \"SS-${port}\""
+                echo "    type: ss"
+                echo "    server: ${server_ip}"
+                echo "    port: ${port}"
+                echo "    cipher: ${cipher}"
+                echo "    password: ${user_password}"
+                ;;
+        esac
+        echo ""
+    done
+
+    # Clash代理组和规则
+    cat <<'EOF'
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "AUTO"
+EOF
+
+    # 添加所有节点到代理组
+    echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
+        local protocol=$(echo "$node" | jq -r '.protocol')
+        local port=$(echo "$node" | jq -r '.port')
+        local security=$(echo "$node" | jq -r '.security // "none"')
+
+        # Reality节点跳过
+        [[ "$protocol" == "vless" && "$security" == "reality" ]] && continue
+
+        case $protocol in
+            vless) echo "      - \"VLESS-${port}\"" ;;
+            vmess) echo "      - \"VMess-${port}\"" ;;
+            trojan) echo "      - \"Trojan-${port}\"" ;;
+            shadowsocks) echo "      - \"SS-${port}\"" ;;
+        esac
+    done
+
+    cat <<'EOF'
+
+  - name: "AUTO"
+    type: url-test
+    proxies:
+EOF
+
+    # 再次添加所有节点到自动选择组
+    echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
+        local protocol=$(echo "$node" | jq -r '.protocol')
+        local port=$(echo "$node" | jq -r '.port')
+        local security=$(echo "$node" | jq -r '.security // "none"')
+
+        [[ "$protocol" == "vless" && "$security" == "reality" ]] && continue
+
+        case $protocol in
+            vless) echo "      - \"VLESS-${port}\"" ;;
+            vmess) echo "      - \"VMess-${port}\"" ;;
+            trojan) echo "      - \"Trojan-${port}\"" ;;
+            shadowsocks) echo "      - \"SS-${port}\"" ;;
+        esac
+    done
+
+    cat <<'EOF'
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+
+rules:
+  - DOMAIN-SUFFIX,google.com,PROXY
+  - DOMAIN-KEYWORD,google,PROXY
+  - DOMAIN,google.com,PROXY
+  - DOMAIN-SUFFIX,ad.com,REJECT
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
+EOF
+}
+
+#================================================================
 # 订阅管理功能
 #================================================================
 
@@ -577,10 +741,11 @@ generate_subscription_with_user() {
     # 选择订阅类型
     echo ""
     echo -e "${CYAN}选择订阅类型：${NC}"
-    echo -e "  ${GREEN}1.${NC} 通用订阅（Base64编码，支持大部分客户端）"
+    echo -e "  ${GREEN}1.${NC} 通用订阅（Base64编码，支持V2Ray/Qv2ray等）"
     echo -e "  ${GREEN}2.${NC} 原始订阅（纯文本，支持所有客户端）"
+    echo -e "  ${GREEN}3.${NC} Clash订阅（YAML格式，支持Clash系列）"
     echo ""
-    read -p "请选择 [1-2，默认: 1]: " sub_type
+    read -p "请选择 [1-3，默认: 1]: " sub_type
     sub_type=${sub_type:-1}
 
     # 收集所有分享链接（新架构：只生成用户绑定的节点）
@@ -665,6 +830,21 @@ generate_subscription_with_user() {
             # 原始订阅
             sub_content=$(printf "%s\n" "${share_links[@]}")
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
+            ;;
+        3)
+            # Clash订阅 - YAML格式
+            # 收集用户绑定的节点JSON数组
+            local nodes_json_array="[]"
+            for port in "${user_node_ports[@]}"; do
+                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                if [[ -n "$node" && "$node" != "null" ]]; then
+                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
+                fi
+            done
+
+            # 生成Clash配置
+            sub_content=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password")
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_clash.yaml"
             ;;
     esac
 
