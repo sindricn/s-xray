@@ -207,9 +207,9 @@ generate_vmess_link_from_config() {
   "v": "2",
   "ps": "${remark}",
   "add": "${server_ip}",
-  "port": "${port}",
+  "port": ${port},
   "id": "${uuid}",
-  "aid": "${alter_id}",
+  "aid": ${alter_id},
   "scy": "${cipher}",
   "net": "${transport}",
   "type": "none",
@@ -361,8 +361,9 @@ EOF
                     echo "    server: ${server_ip}"
                     echo "    port: ${port}"
                     echo "    uuid: ${user_id}"
-                    echo "    cipher: none"
+                    echo "    udp: true"
                     echo "    tls: true"
+                    echo "    skip-cert-verify: false"
                     [[ -n "$tls_domain" ]] && echo "    servername: ${tls_domain}"
                     if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
                         echo "    network: ws"
@@ -370,12 +371,19 @@ EOF
                         echo "      path: ${ws_path}"
                     fi
                 else
+                    # Plain VLESS (no TLS)
+                    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
                     echo "  - name: \"VLESS-${port}\""
                     echo "    type: vless"
                     echo "    server: ${server_ip}"
                     echo "    port: ${port}"
                     echo "    uuid: ${user_id}"
-                    echo "    cipher: none"
+                    echo "    udp: true"
+                    if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
+                        echo "    network: ws"
+                        echo "    ws-opts:"
+                        echo "      path: ${ws_path}"
+                    fi
                 fi
                 ;;
             vmess)
@@ -389,10 +397,11 @@ EOF
                 echo "    uuid: ${user_id}"
                 echo "    alterId: ${alter_id}"
                 echo "    cipher: ${cipher}"
+                echo "    udp: true"
                 if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
                     echo "    network: ws"
                     echo "    ws-opts:"
-                    echo "      path: ${ws_path}"
+                        echo "      path: ${ws_path}"
                 fi
                 ;;
             trojan)
@@ -402,6 +411,8 @@ EOF
                 echo "    server: ${server_ip}"
                 echo "    port: ${port}"
                 echo "    password: ${user_password}"
+                echo "    udp: true"
+                echo "    skip-cert-verify: false"
                 [[ -n "$tls_domain" ]] && echo "    sni: ${tls_domain}"
                 ;;
             shadowsocks)
@@ -412,6 +423,7 @@ EOF
                 echo "    port: ${port}"
                 echo "    cipher: ${cipher}"
                 echo "    password: ${user_password}"
+                echo "    udp: true"
                 ;;
         esac
         echo ""
@@ -515,9 +527,8 @@ show_node_share_link() {
 
         local protocol=$(echo "$node" | jq -r '.protocol')
         local port=$(echo "$node" | jq -r '.port')
-        local email=$(echo "$node" | jq -r '.email // ""')
 
-        printf "${CYAN}[%d]${NC} %s:%s - %s\n" "$index" "$protocol" "$port" "$email"
+        printf "${CYAN}[%d]${NC} %s:%s\n" "$index" "$protocol" "$port"
         ((index++))
     done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
 
@@ -538,39 +549,44 @@ show_node_share_link() {
 
     local protocol=$(echo "$node" | jq -r '.protocol')
     local port=$(echo "$node" | jq -r '.port')
-    local node_id=$(echo "$node" | jq -r '.id // ""')
-    local node_email=$(echo "$node" | jq -r '.email // ""')
 
     echo ""
     echo -e "${CYAN}节点信息：${NC}"
     echo -e "  协议: ${YELLOW}$protocol${NC}"
     echo -e "  端口: ${YELLOW}$port${NC}"
-    echo -e "  备注: ${YELLOW}$node_email${NC}"
     echo ""
 
     # 选择用户
     echo -e "${YELLOW}选择用户：${NC}"
-    echo -e "  ${GREEN}1.${NC} 使用节点自带配置（默认）"
+    echo -e "  ${GREEN}1.${NC} 使用admin用户（默认）"
     echo -e "  ${GREEN}2.${NC} 选择其他用户"
     echo ""
     read -p "请选择 [1-2，默认: 1]: " user_choice
     user_choice=${user_choice:-1}
 
     local final_uuid=""
-    local final_email=""
+    local final_remark=""
 
     if [[ "$user_choice" == "2" ]]; then
         # 显示用户列表
         if [[ ! -f "$USERS_FILE" ]]; then
-            print_warning "暂无用户，使用节点默认配置"
-            final_uuid="$node_id"
-            final_email="$node_email"
+            print_warning "暂无用户，使用admin用户"
+            local admin_info=$(get_admin_user_info)
+            if [[ $? -ne 0 ]]; then
+                print_error "无法获取admin用户信息"
+                return 1
+            fi
+            IFS='|' read -r final_uuid final_password final_remark <<< "$admin_info"
         else
             local user_count=$(jq -r '.users | length' "$USERS_FILE")
             if [[ "$user_count" -eq 0 ]]; then
-                print_warning "暂无用户，使用节点默认配置"
-                final_uuid="$node_id"
-                final_email="$node_email"
+                print_warning "暂无用户，使用admin用户"
+                local admin_info=$(get_admin_user_info)
+                if [[ $? -ne 0 ]]; then
+                    print_error "无法获取admin用户信息"
+                    return 1
+                fi
+                IFS='|' read -r final_uuid final_password final_remark <<< "$admin_info"
             else
                 echo ""
                 echo -e "${YELLOW}用户列表：${NC}"
@@ -581,9 +597,10 @@ show_node_share_link() {
                     fi
 
                     local uid=$(echo "$user" | jq -r '.id')
+                    local uname=$(echo "$user" | jq -r '.username')
                     local uemail=$(echo "$user" | jq -r '.email')
 
-                    printf "${CYAN}[%d]${NC} %s - %s\n" "$uindex" "$uemail" "$uid"
+                    printf "${CYAN}[%d]${NC} %s (%s) - UUID: %s\n" "$uindex" "$uname" "$uemail" "${uid:0:16}..."
                     ((uindex++))
                 done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
 
@@ -602,12 +619,17 @@ show_node_share_link() {
                 fi
 
                 final_uuid=$(echo "$user" | jq -r '.id')
-                final_email=$(echo "$user" | jq -r '.email')
+                final_remark=$(echo "$user" | jq -r '.username')
             fi
         fi
     else
-        final_uuid="$node_id"
-        final_email="$node_email"
+        # 默认使用admin用户
+        local admin_info=$(get_admin_user_info)
+        if [[ $? -ne 0 ]]; then
+            print_error "无法获取admin用户信息"
+            return 1
+        fi
+        IFS='|' read -r final_uuid final_password final_remark <<< "$admin_info"
     fi
 
     # 生成分享链接
@@ -615,7 +637,7 @@ show_node_share_link() {
     print_info "正在生成分享链接..."
     echo ""
 
-    local share_link=$(generate_share_link_smart "$final_uuid" "$final_email" "$node")
+    local share_link=$(generate_share_link_smart "$final_uuid" "$final_remark" "$node")
 
     if [[ -z "$share_link" ]]; then
         print_error "生成分享链接失败"
@@ -626,7 +648,8 @@ show_node_share_link() {
     echo -e "${GREEN}║      分享链接生成成功                ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${CYAN}节点:${NC} ${protocol}:${port} - ${final_email}"
+    echo -e "${CYAN}节点:${NC} ${protocol}:${port}"
+    echo -e "${CYAN}用户:${NC} ${final_remark}"
     echo ""
     echo -e "${CYAN}分享链接:${NC}"
     echo -e "${GREEN}${share_link}${NC}"

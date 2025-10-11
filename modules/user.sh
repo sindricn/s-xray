@@ -95,20 +95,25 @@ list_global_users() {
         return 0
     fi
 
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
-    printf "${CYAN}║${NC} %-15s %-18s %-20s %-8s ${CYAN}║${NC}\n" "用户名" "密码" "UUID" "状态"
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    printf "${CYAN}║${NC} %-12s %-16s %-18s %-20s %-8s ${CYAN}║${NC}\n" "用户名" "密码" "邮箱" "UUID" "状态"
+    echo -e "${CYAN}╠═══════════════════════════════════════════════════════════════════════════════════╣${NC}"
 
     while IFS= read -r user; do
         local username=$(echo "$user" | jq -r '.username // "未设置"')
         local password=$(echo "$user" | jq -r '.password // "无"')
+        local email=$(echo "$user" | jq -r '.email // "未设置"')
         local uuid=$(echo "$user" | jq -r '.id')
         local enabled=$(echo "$user" | jq -r '.enabled // true')
 
-        local short_uuid="${uuid:0:16}..."
-        local short_password="${password:0:16}"
-        if [[ ${#password} -gt 16 ]]; then
-            short_password="${password:0:13}..."
+        local short_uuid="${uuid:0:18}..."
+        local short_password="${password:0:14}"
+        if [[ ${#password} -gt 14 ]]; then
+            short_password="${password:0:11}..."
+        fi
+        local short_email="${email:0:16}"
+        if [[ ${#email} -gt 16 ]]; then
+            short_email="${email:0:13}..."
         fi
 
         local status=""
@@ -118,10 +123,10 @@ list_global_users() {
             status="${RED}禁用${NC}"
         fi
 
-        printf "${CYAN}║${NC} %-15s %-18s %-20s %-8b ${CYAN}║${NC}\n" "$username" "$short_password" "$short_uuid" "$status"
+        printf "${CYAN}║${NC} %-12s %-16s %-18s %-20s %-8b ${CYAN}║${NC}\n" "$username" "$short_password" "$short_email" "$short_uuid" "$status"
     done < <(jq -c '.users[]' "$USERS_FILE")
 
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo -e "${CYAN}总计: ${user_count} 个用户${NC}"
 }
 

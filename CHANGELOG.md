@@ -107,6 +107,114 @@ proxy-groups:
 
 ---
 
+### 🐛 修复：用户信息显示和节点链接问题（补充修复）
+
+#### 问题描述
+1. `list_global_users()`没有显示email字段
+2. 查看单个节点链接时，默认配置错误且用户列表显示email而非username
+3. VMess链接JSON格式中port和aid字段为字符串而非数字
+4. Clash订阅配置缺少必要字段导致导入失败
+
+#### 修复内容
+
+**modules/user.sh**:
+
+1. ✅ **list_global_users()** (Line 98-130)
+   - 添加email字段显示列
+   - 调整列宽以容纳所有字段：用户名、密码、邮箱、UUID、状态
+   - 显示格式：`username (12) | password (16) | email (18) | UUID (20) | status (8)`
+
+**modules/subscription.sh**:
+
+2. ✅ **show_node_share_link()** (Line 488-645)
+   - Line 519: 移除读取不存在的`node.email`字段
+   - Line 549: 将"使用节点自带配置"改为"使用admin用户（默认）"
+   - Line 614-620: 默认选项（选项1）改为使用`get_admin_user_info()`获取admin用户
+   - Line 587-591: 用户列表显示格式改为`username (email) - UUID`
+   - Line 610: 使用`username`而不是`email`作为final_remark
+   - Line 639-640: 结果显示分离节点和用户信息
+
+3. ✅ **generate_vmess_link_from_config()** (Line 187-230)
+   - Line 210: `"port": ${port}` - 改为数字类型（移除引号）
+   - Line 212: `"aid": ${alter_id}` - 改为数字类型（移除引号）
+   - 修复VMess链接JSON格式，符合V2Ray标准
+
+4. ✅ **generate_clash_config()** (Line 323-481)
+   - Line 364, 381, 400, 414, 426: 为所有协议添加`udp: true`字段
+   - Line 366, 415: 为TLS协议添加`skip-cert-verify: false`字段
+   - Line 375-386: 完善Plain VLESS配置（无TLS场景）
+   - VLESS配置：移除错误的`cipher`字段，添加正确的`udp`和`skip-cert-verify`
+   - Trojan配置：添加缺失的`udp`和`skip-cert-verify`字段
+   - VMess/SS配置：添加`udp: true`字段
+
+#### 修复前后对比
+
+**查看单个节点链接**：
+```bash
+# 修复前
+选择用户：
+  1. 使用节点自带配置（默认）  # ❌ nodes.json没有email字段
+  2. 选择其他用户
+
+用户列表：
+[1] admin@system - uuid...  # ❌ 显示email
+
+# 修复后
+选择用户：
+  1. 使用admin用户（默认）  # ✅ 使用get_admin_user_info()
+  2. 选择其他用户
+
+用户列表：
+[1] admin (admin@system) - UUID: xxx...  # ✅ 显示username (email)
+```
+
+**Clash配置**：
+```yaml
+# 修复前
+- name: "VLESS-443"
+  type: vless
+  server: 1.2.3.4
+  port: 443
+  uuid: xxx
+  cipher: none  # ❌ VLESS不需要cipher
+  tls: true
+  # ❌ 缺少udp和skip-cert-verify
+
+# 修复后
+- name: "VLESS-443"
+  type: vless
+  server: 1.2.3.4
+  port: 443
+  uuid: xxx
+  udp: true  # ✅ 添加UDP支持
+  tls: true
+  skip-cert-verify: false  # ✅ 添加证书验证设置
+  servername: domain.com
+```
+
+**VMess链接**：
+```json
+// 修复前
+{
+  "port": "443",  // ❌ 字符串
+  "aid": "0"      // ❌ 字符串
+}
+
+// 修复后
+{
+  "port": 443,    // ✅ 数字
+  "aid": 0        // ✅ 数字
+}
+```
+
+#### 影响范围
+- ✅ 全局用户列表现在正确显示所有字段（username, password, email, UUID, status）
+- ✅ 查看单个节点链接默认使用admin用户，用户列表显示清晰
+- ✅ VMess订阅链接符合标准格式，客户端可正常导入
+- ✅ Clash订阅配置完整，支持所有协议正常连接
+
+---
+
 ### 🐛 修复：用户管理函数适配新架构
 
 #### 问题描述
