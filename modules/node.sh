@@ -491,7 +491,7 @@ read_vless_doc() {
     fi
 }
 
-# 添加 VLESS 节点
+# 添加 VLESS 节点（非Reality）
 add_vless_node() {
     clear
     echo -e "${CYAN}====== 添加 VLESS 节点 ======${NC}"
@@ -500,14 +500,11 @@ add_vless_node() {
     read -p "请输入端口 [默认: 443]: " port
     port=${port:-443}
 
-    read -p "请输入用户UUID [留空自动生成]: " uuid
-    if [[ -z "$uuid" ]]; then
-        uuid=$(generate_uuid)
-        print_info "自动生成 UUID: $uuid"
+    # 检查端口是否已被占用
+    if check_port_exists "$port"; then
+        print_error "端口 $port 已被占用或已存在，请使用其他端口"
+        return 1
     fi
-
-    read -p "请输入用户邮箱/备注 [默认: user@vless]: " email
-    email=${email:-user@vless}
 
     # 选择传输协议
     echo -e "\n${CYAN}传输协议选择：${NC}"
@@ -541,12 +538,13 @@ add_vless_node() {
 
     # TLS 配置
     read -p "是否启用 TLS? [y/N]: " enable_tls
-    local tls_config=""
+    local security="none"
     local tls_domain=""
     local tls_cert=""
     local tls_key=""
 
     if [[ "$enable_tls" == "y" || "$enable_tls" == "Y" ]]; then
+        security="tls"
         read -p "请输入域名: " tls_domain
         read -p "请输入证书路径 [留空使用自签名]: " tls_cert
 
@@ -560,80 +558,52 @@ add_vless_node() {
         fi
     fi
 
-    # 生成配置
-    local inbound_config=$(cat <<EOF
-    {
-      "port": ${port},
-      "protocol": "vless",
-      "tag": "vless-${port}",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "email": "${email}",
-            "level": 0,
-            "flow": "xtls-rprx-vision"
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "${transport}"
-EOF
-)
+    # 构建extra_config JSON (包含VLESS特定参数)
+    local extra_config=$(jq -n \
+        --arg ws_path "$ws_path" \
+        --arg grpc_service "$grpc_service" \
+        --arg tls_domain "$tls_domain" \
+        --arg tls_cert "$tls_cert" \
+        --arg tls_key "$tls_key" \
+        '{
+            ws_path: $ws_path,
+            grpc_service: $grpc_service,
+            tls_domain: $tls_domain,
+            tls_cert: $tls_cert,
+            tls_key: $tls_key
+        }')
 
-    # 添加传输层配置
-    if [[ "$transport" == "ws" ]]; then
-        inbound_config+=",
-        \"wsSettings\": {
-          \"path\": \"${ws_path}\"
-        }"
-    elif [[ "$transport" == "grpc" ]]; then
-        inbound_config+=",
-        \"grpcSettings\": {
-          \"serviceName\": \"${grpc_service}\"
-        }"
+    # 保存节点信息(只保存技术参数,不包含用户)
+    save_node_info "vless" "$port" "$transport" "$security" "$extra_config"
+
+    # 绑定admin用户到节点
+    local admin_info=$(bind_admin_to_node "$port" "vless")
+    if [[ $? -ne 0 ]]; then
+        return 1
     fi
 
-    # 添加 TLS 配置
-    if [[ "$enable_tls" == "y" || "$enable_tls" == "Y" ]]; then
-        inbound_config+=",
-        \"security\": \"tls\",
-        \"tlsSettings\": {
-          \"serverName\": \"${tls_domain}\",
-          \"certificates\": [
-            {
-              \"certificateFile\": \"${tls_cert}\",
-              \"keyFile\": \"${tls_key}\"
-            }
-          ]
-        }"
-    fi
+    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
 
-    inbound_config+="
-      },
-      \"sniffing\": {
-        \"enabled\": true,
-        \"destOverride\": [\"http\", \"tls\"]
-      }
-    }"
-
-    # 保存节点信息
-    save_node_info "vless" "$port" "$uuid" "$email" "$transport" "$inbound_config"
-
-    # 更新配置文件
-    add_inbound_to_config "$inbound_config"
-
-    # 重启服务
+    # 重新生成完整配置
+    generate_xray_config
     restart_xray
 
-    print_success "VLESS 节点添加成功！"
+    print_success "VLESS 节点创建成功！"
     print_info "端口: $port"
-    print_info "UUID: $uuid"
-    print_info "传输: $transport"
+    print_info "传输协议: $transport"
+    if [[ "$security" == "tls" ]]; then
+        print_info "TLS域名: $tls_domain"
+    fi
+    print_info "默认用户: admin"
+    echo ""
 
-    # 生成分享链接
-    generate_vless_share_link "$uuid" "$email" "$port" "$transport" "$ws_path" "$tls_domain"
+    # 生成并显示VLESS分享链接
+    generate_vless_share_link "$admin_uuid" "$admin_email" "$port" "$transport" "$ws_path" "$tls_domain"
+
+    echo ""
+    print_success "✅ 节点创建完成并已绑定admin用户！"
+    print_info "提示：可在【用户管理】中添加更多用户到此节点"
+    echo ""
 }
 
 # 添加 VMess 节点

@@ -1,5 +1,39 @@
 # 更新日志
 
+## [v1.3.3] - 2025-10-11
+
+### 🐛 修复：节点创建用户绑定逻辑
+
+#### 问题描述
+修复了add_vless_node()函数使用旧架构导致的用户绑定问题。该函数仍在手动输入UUID/email并直接保存到nodes.json，未通过node_users.json建立绑定关系。
+
+#### 修复内容
+- ✅ **重构add_vless_node()** - 完全改用新架构，与其他节点类型保持一致
+  - 移除手动UUID/email输入
+  - 只保存节点技术参数到nodes.json
+  - 自动调用bind_admin_to_node()建立绑定
+  - 通过generate_xray_config()动态生成配置
+
+#### 验证结果
+所有5个节点创建函数现在都使用统一的新架构：
+1. ✅ `quick_add_vless_reality()` - Reality快速搭建
+2. ✅ `add_vless_node()` - VLESS标准节点 **← 本次修复**
+3. ✅ `add_vmess_node()` - VMess节点
+4. ✅ `add_trojan_node()` - Trojan节点
+5. ✅ `add_shadowsocks_node()` - Shadowsocks节点
+
+#### 统一工作流程
+```
+1. 输入技术参数（端口、传输、加密等）
+2. save_node_info() - 保存节点技术参数到nodes.json
+3. bind_admin_to_node() - 创建节点-用户绑定关系到node_users.json
+4. generate_xray_config() - 从三个JSON文件动态生成config.json
+5. restart_xray - 重启服务
+6. 显示分享链接 - 节点立即可用
+```
+
+---
+
 ## [v1.3.2] - 2025-10-11
 
 ### 🔧 用户管理优化和卸载功能增强
