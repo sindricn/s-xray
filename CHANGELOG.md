@@ -1,5 +1,77 @@
 # 更新日志
 
+## [v1.3.6] - 2025-10-11
+
+### 🐛 关键修复：Clash订阅导入失败
+
+#### 问题描述
+Clash订阅链接无法在客户端中导入节点，但单节点链接可以正常导入。
+
+**根本原因**：
+1. **Subshell问题**：第351-437行使用管道+while循环生成节点配置，导致在subshell中运行，输出无法写入父shell
+2. 原代码结构：
+   ```bash
+   echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
+       echo "  - name: \"VLESS-${port}\""  # 在subshell中，输出丢失
+       echo "    type: vless"
+   done
+   ```
+3. 结果：生成的Clash YAML文件中`proxies:`部分为空，导致无节点可用
+
+#### 修复方案
+
+**完全重写 generate_clash_config() 函数** (modules/subscription.sh Line 330-558)
+
+**修复前**：
+- 使用管道 `echo | jq | while` 导致subshell问题
+- 节点配置输出丢失
+- proxy-groups中有节点名但proxies部分为空
+
+**修复后**：
+- 使用数组收集：`proxy_configs=()` 和 `proxy_list=()`
+- 在while循环中将配置存入数组：`proxy_configs+=("$node_config")`
+- 循环后统一输出：`for config in "${proxy_configs[@]}"; do echo "$config"; done`
+- 参考s-hy2项目的成功实现模式
+
+**关键代码改动**：
+```bash
+# 新增：使用数组收集节点配置
+local proxy_configs=()
+local proxy_list=()
+
+while IFS= read -r node; do
+    local node_config="..."  # 构建完整节点配置
+    [[ -n "$node_config" ]] && proxy_configs+=("$node_config")
+    proxy_list+=("$node_name")
+done < <(echo "$nodes_array" | jq -c '.[]')
+
+# 输出所有节点配置
+for config in "${proxy_configs[@]}"; do
+    echo "$config"
+    echo ""
+done
+```
+
+**同步改进**：
+- 增强路由规则：新增IPv6局域网、更多媒体服务关键词、analytics/track广告拦截
+- 完善代理组：保持5个代理组结构（节点选择/自动选择/国外媒体/全球直连/全球拦截）
+- 参考s-hy2完整规则集
+
+#### 影响范围
+- ✅ VLESS (TLS/Plain) 节点正确生成
+- ✅ VMess 节点正确生成
+- ✅ Trojan 节点正确生成
+- ✅ Shadowsocks 节点正确生成
+- ✅ Clash订阅可在Clash Verge/ClashX/Clash for Windows中正常导入
+- ✅ 代理组节点列表完整显示
+
+**测试验证**：
+- 生成的Clash YAML包含完整的`proxies:`部分
+- 每个节点配置包含name/type/server/port等完整字段
+- proxy-groups中引用的节点名与proxies中定义的节点名匹配
+
+---
+
 ## [v1.3.5] - 2025-10-11
 
 ### 🐛 修复：Admin用户显示问题

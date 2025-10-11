@@ -347,124 +347,136 @@ external-controller: 127.0.0.1:9090
 proxies:
 EOF
 
-    # 生成每个节点的配置
-    echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
+    # 关键修复：使用数组收集节点配置，避免subshell问题
+    local proxy_configs=()
+    local proxy_list=()
+
+    while IFS= read -r node; do
+        [[ -z "$node" || "$node" == "null" ]] && continue
+
         local protocol=$(echo "$node" | jq -r '.protocol')
         local port=$(echo "$node" | jq -r '.port')
         local security=$(echo "$node" | jq -r '.security // "none"')
         local transport=$(echo "$node" | jq -r '.transport // "tcp"')
         local extra=$(echo "$node" | jq -r '.extra')
 
+        # Reality节点Clash不支持，跳过
+        if [[ "$protocol" == "vless" && "$security" == "reality" ]]; then
+            continue
+        fi
+
+        local node_config=""
+
         case $protocol in
             vless)
-                if [[ "$security" == "reality" ]]; then
-                    # Clash暂不支持Reality，跳过
-                    continue
-                elif [[ "$security" == "tls" ]]; then
+                local node_name="VLESS-${port}"
+                proxy_list+=("$node_name")
+
+                if [[ "$security" == "tls" ]]; then
                     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-                    echo "  - name: \"VLESS-${port}\""
-                    echo "    type: vless"
-                    echo "    server: ${server_ip}"
-                    echo "    port: ${port}"
-                    echo "    uuid: ${user_id}"
-                    echo "    udp: true"
-                    echo "    tls: true"
-                    echo "    skip-cert-verify: false"
-                    [[ -n "$tls_domain" ]] && echo "    servername: ${tls_domain}"
+                    node_config="  - name: \"${node_name}\"
+    type: vless
+    server: ${server_ip}
+    port: ${port}
+    uuid: ${user_id}
+    udp: true
+    tls: true
+    skip-cert-verify: false"
+                    [[ -n "$tls_domain" ]] && node_config="${node_config}
+    servername: ${tls_domain}"
                     if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
-                        echo "    network: ws"
-                        echo "    ws-opts:"
-                        echo "      path: ${ws_path}"
+                        node_config="${node_config}
+    network: ws
+    ws-opts:
+      path: ${ws_path}"
                     fi
                 else
                     # Plain VLESS (no TLS)
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-                    echo "  - name: \"VLESS-${port}\""
-                    echo "    type: vless"
-                    echo "    server: ${server_ip}"
-                    echo "    port: ${port}"
-                    echo "    uuid: ${user_id}"
-                    echo "    udp: true"
+                    node_config="  - name: \"${node_name}\"
+    type: vless
+    server: ${server_ip}
+    port: ${port}
+    uuid: ${user_id}
+    udp: true"
                     if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
-                        echo "    network: ws"
-                        echo "    ws-opts:"
-                        echo "      path: ${ws_path}"
+                        node_config="${node_config}
+    network: ws
+    ws-opts:
+      path: ${ws_path}"
                     fi
                 fi
                 ;;
             vmess)
+                local node_name="VMess-${port}"
+                proxy_list+=("$node_name")
+
                 local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
                 local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
                 local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-                echo "  - name: \"VMess-${port}\""
-                echo "    type: vmess"
-                echo "    server: ${server_ip}"
-                echo "    port: ${port}"
-                echo "    uuid: ${user_id}"
-                echo "    alterId: ${alter_id}"
-                echo "    cipher: ${cipher}"
-                echo "    udp: true"
+                node_config="  - name: \"${node_name}\"
+    type: vmess
+    server: ${server_ip}
+    port: ${port}
+    uuid: ${user_id}
+    alterId: ${alter_id}
+    cipher: ${cipher}
+    udp: true"
                 if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
-                    echo "    network: ws"
-                    echo "    ws-opts:"
-                        echo "      path: ${ws_path}"
+                    node_config="${node_config}
+    network: ws
+    ws-opts:
+      path: ${ws_path}"
                 fi
                 ;;
             trojan)
+                local node_name="Trojan-${port}"
+                proxy_list+=("$node_name")
+
                 local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
-                echo "  - name: \"Trojan-${port}\""
-                echo "    type: trojan"
-                echo "    server: ${server_ip}"
-                echo "    port: ${port}"
-                echo "    password: ${user_password}"
-                echo "    udp: true"
-                echo "    skip-cert-verify: false"
-                [[ -n "$tls_domain" ]] && echo "    sni: ${tls_domain}"
+                node_config="  - name: \"${node_name}\"
+    type: trojan
+    server: ${server_ip}
+    port: ${port}
+    password: ${user_password}
+    udp: true
+    skip-cert-verify: false"
+                [[ -n "$tls_domain" ]] && node_config="${node_config}
+    sni: ${tls_domain}"
                 ;;
             shadowsocks)
+                local node_name="SS-${port}"
+                proxy_list+=("$node_name")
+
                 local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
-                echo "  - name: \"SS-${port}\""
-                echo "    type: ss"
-                echo "    server: ${server_ip}"
-                echo "    port: ${port}"
-                echo "    cipher: ${cipher}"
-                echo "    password: ${user_password}"
-                echo "    udp: true"
+                node_config="  - name: \"${node_name}\"
+    type: ss
+    server: ${server_ip}
+    port: ${port}
+    cipher: ${cipher}
+    password: ${user_password}
+    udp: true"
                 ;;
         esac
+
+        [[ -n "$node_config" ]] && proxy_configs+=("$node_config")
+    done < <(echo "$nodes_array" | jq -c '.[]')
+
+    # 输出所有节点配置
+    for config in "${proxy_configs[@]}"; do
+        echo "$config"
         echo ""
     done
 
-    # Clash代理组和规则
     # Clash代理组和规则（参考s-hy2项目格式）
     cat <<'EOF'
-
 proxy-groups:
   - name: "🚀 节点选择"
     type: select
     proxies:
       - "🔄 自动选择"
 EOF
-
-    # 添加所有节点到选择组
-    local proxy_list=()
-    while IFS= read -r node; do
-        [[ -z "$node" || "$node" == "null" ]] && continue
-        local protocol=$(echo "$node" | jq -r '.protocol')
-        local port=$(echo "$node" | jq -r '.port')
-        local security=$(echo "$node" | jq -r '.security // "none"')
-
-        # Reality节点跳过
-        [[ "$protocol" == "vless" && "$security" == "reality" ]] && continue
-
-        case $protocol in
-            vless) proxy_list+=("VLESS-${port}") ;;
-            vmess) proxy_list+=("VMess-${port}") ;;
-            trojan) proxy_list+=("Trojan-${port}") ;;
-            shadowsocks) proxy_list+=("SS-${port}") ;;
-        esac
-    done < <(echo "$nodes_array" | jq -c '.[]')
 
     # 输出节点列表到选择组
     for proxy in "${proxy_list[@]}"; do
@@ -514,11 +526,19 @@ rules:
   - IP-CIDR,10.0.0.0/8,🎯 全球直连,no-resolve
   - IP-CIDR,172.16.0.0/12,🎯 全球直连,no-resolve
   - IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve
+  - IP-CIDR,100.64.0.0/10,🎯 全球直连,no-resolve
+  - IP-CIDR6,::1/128,🎯 全球直连,no-resolve
+  - IP-CIDR6,fc00::/7,🎯 全球直连,no-resolve
+  - IP-CIDR6,fe80::/10,🎯 全球直连,no-resolve
 
-  # 常用国外服务
+  # 常用国外媒体服务
   - DOMAIN-KEYWORD,youtube,🌍 国外媒体
   - DOMAIN-KEYWORD,google,🌍 国外媒体
   - DOMAIN-KEYWORD,twitter,🌍 国外媒体
+  - DOMAIN-KEYWORD,facebook,🌍 国外媒体
+  - DOMAIN-KEYWORD,instagram,🌍 国外媒体
+  - DOMAIN-KEYWORD,telegram,🌍 国外媒体
+  - DOMAIN-KEYWORD,netflix,🌍 国外媒体
   - DOMAIN-KEYWORD,github,🌍 国外媒体
   - DOMAIN-SUFFIX,openai.com,🌍 国外媒体
   - DOMAIN-SUFFIX,chatgpt.com,🌍 国外媒体
@@ -526,8 +546,10 @@ rules:
   # 广告拦截
   - DOMAIN-KEYWORD,ad,🛑 全球拦截
   - DOMAIN-KEYWORD,ads,🛑 全球拦截
+  - DOMAIN-KEYWORD,analytics,🛑 全球拦截
+  - DOMAIN-KEYWORD,track,🛑 全球拦截
 
-  # 国内直连
+  # 国内域名和IP直连
   - GEOIP,CN,🎯 全球直连
 
   # 其他流量走代理
