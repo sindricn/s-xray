@@ -36,6 +36,47 @@ check_port_exists() {
     return 1  # 端口可用
 }
 
+# 绑定admin用户到节点（通用函数）
+# 参数: $1=port, $2=protocol
+# 返回: admin用户信息（通过echo）
+bind_admin_to_node() {
+    local port=$1
+    local protocol=$2
+
+    # 获取admin用户信息
+    local admin_user=$(jq -r '.users[] | select(.username == "admin")' "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$admin_user" || "$admin_user" == "null" ]]; then
+        print_error "admin用户不存在，请先初始化系统"
+        return 1
+    fi
+
+    local admin_uuid=$(echo "$admin_user" | jq -r '.id')
+    local admin_password=$(echo "$admin_user" | jq -r '.password')
+    local admin_email=$(echo "$admin_user" | jq -r '.email')
+
+    # 自动绑定admin用户到节点
+    if [[ ! -f "$NODE_USERS_FILE" ]]; then
+        echo '{"bindings":[]}' > "$NODE_USERS_FILE"
+    fi
+
+    # 检查绑定是否已存在
+    local existing_binding=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+    if [[ -z "$existing_binding" ]]; then
+        # 创建新绑定
+        local binding_data=$(jq -n \
+            --arg port "$port" \
+            --arg protocol "$protocol" \
+            --arg user "$admin_uuid" \
+            '{port: $port, protocol: $protocol, users: [$user]}')
+        jq ".bindings += [$binding_data]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+    fi
+
+    # 返回admin用户信息（用于后续生成分享链接）
+    echo "$admin_uuid|$admin_password|$admin_email"
+    return 0
+}
+
 # 测试 Reality 密钥生成（调试用）
 test_reality_keygen() {
     echo -e "${CYAN}====== Reality 密钥生成测试 ======${NC}"
@@ -379,6 +420,14 @@ quick_add_vless_reality() {
     # 保存节点信息（新架构：只保存节点技术参数）
     save_node_info "vless" "$port" "tcp" "reality" "$reality_config"
 
+    # 绑定admin用户到节点
+    local admin_info=$(bind_admin_to_node "$port" "vless")
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+
+    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+
     # 重新生成Xray配置文件
     generate_xray_config
 
@@ -395,6 +444,7 @@ quick_add_vless_reality() {
     echo -e "  协议: ${YELLOW}VLESS${NC}"
     echo -e "  传输: ${YELLOW}TCP${NC}"
     echo -e "  安全: ${YELLOW}Reality${NC}"
+    echo -e "  默认用户: ${YELLOW}admin${NC}"
     echo ""
     echo -e "${CYAN}Reality 配置：${NC}"
     echo -e "  目标网站: ${YELLOW}$dest_server${NC}"
@@ -402,12 +452,13 @@ quick_add_vless_reality() {
     echo -e "  公钥: ${YELLOW}$public_key${NC}"
     echo -e "  ShortId: ${YELLOW}$short_id${NC}"
     echo ""
-    echo -e "${GREEN}✅ 节点创建完成！${NC}"
+
+    # 生成并显示分享链接
+    generate_vless_reality_share "$admin_uuid" "$admin_email" "$port" "$dest_server" "$server_names" "$public_key" "$short_id"
+
     echo ""
-    echo -e "${YELLOW}提示：${NC}"
-    echo -e "  1. 节点已创建，但尚未绑定用户"
-    echo -e "  2. 请前往【用户管理】添加用户并绑定到此节点"
-    echo -e "  3. 或使用【订阅管理】生成订阅链接时选择用户"
+    echo -e "${GREEN}✅ 节点创建完成并已绑定admin用户！${NC}"
+    echo -e "${YELLOW}提示：可在【用户管理】中添加更多用户到此节点${NC}"
     echo ""
 }
 
@@ -652,6 +703,14 @@ add_vmess_node() {
     # 保存节点信息(只保存技术参数,不包含用户)
     save_node_info "vmess" "$port" "$transport" "none" "$extra_config"
 
+    # 绑定admin用户到节点
+    local admin_info=$(bind_admin_to_node "$port" "vmess")
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+
+    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+
     # 重新生成完整配置
     generate_xray_config
     restart_xray
@@ -664,9 +723,16 @@ add_vmess_node() {
     if [[ "$transport" == "ws" ]]; then
         print_info "WebSocket路径: $ws_path"
     fi
+    print_info "默认用户: admin"
     echo ""
-    print_warning "节点已创建但尚未绑定用户"
-    print_info "请前往【用户管理】-> 【绑定用户到节点】完成用户绑定"
+
+    # 生成并显示VMess分享链接
+    generate_vmess_share_link "$admin_uuid" "$admin_email" "$port" "$transport" "$ws_path" "$alter_id" "$cipher"
+
+    echo ""
+    print_success "✅ 节点创建完成并已绑定admin用户！"
+    print_info "提示：可在【用户管理】中添加更多用户到此节点"
+    echo ""
 }
 
 # 添加 Trojan 节点
@@ -728,6 +794,14 @@ add_trojan_node() {
     # 保存节点信息(只保存技术参数,不包含用户密码)
     save_node_info "trojan" "$port" "tcp" "tls" "$extra_config"
 
+    # 绑定admin用户到节点
+    local admin_info=$(bind_admin_to_node "$port" "trojan")
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+
+    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+
     # 重新生成完整配置
     generate_xray_config
     restart_xray
@@ -739,10 +813,17 @@ add_trojan_node() {
     if [[ -n "$fallback_dest" ]]; then
         print_info "回落: ${fallback_dest}:${fallback_port}"
     fi
+    print_info "默认用户: admin"
+    print_info "Admin密码: $admin_password"
     echo ""
-    print_warning "节点已创建但尚未绑定用户"
-    print_info "请前往【用户管理】-> 【绑定用户到节点】完成用户绑定"
-    print_info "注意: Trojan协议的密码需要在添加用户时为每个用户单独设置"
+
+    # 生成并显示Trojan分享链接
+    generate_trojan_share_link "$admin_password" "$tls_domain" "$port"
+
+    echo ""
+    print_success "✅ 节点创建完成并已绑定admin用户！"
+    print_info "提示：可在【用户管理】中添加更多用户到此节点"
+    echo ""
 }
 
 # 添加 Shadowsocks 节点
@@ -785,6 +866,14 @@ add_shadowsocks_node() {
     # 保存节点信息(只保存技术参数,不包含用户密码)
     save_node_info "shadowsocks" "$port" "tcp" "none" "$extra_config"
 
+    # 绑定admin用户到节点
+    local admin_info=$(bind_admin_to_node "$port" "shadowsocks")
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+
+    IFS='|' read -r admin_uuid admin_password admin_email <<< "$admin_info"
+
     # 重新生成完整配置
     generate_xray_config
     restart_xray
@@ -792,10 +881,17 @@ add_shadowsocks_node() {
     print_success "Shadowsocks 节点创建成功！"
     print_info "端口: $port"
     print_info "加密方式: $cipher"
+    print_info "默认用户: admin"
+    print_info "Admin密码: $admin_password"
     echo ""
-    print_warning "节点已创建但尚未绑定用户"
-    print_info "请前往【用户管理】-> 【绑定用户到节点】完成用户绑定"
-    print_info "注意: Shadowsocks协议的密码需要在添加用户时为每个用户单独设置"
+
+    # 生成并显示SS分享链接
+    generate_ss_share_link "$cipher" "$admin_password" "$port"
+
+    echo ""
+    print_success "✅ 节点创建完成并已绑定admin用户！"
+    print_info "提示：可在【用户管理】中添加更多用户到此节点"
+    echo ""
 }
 
 # 删除节点

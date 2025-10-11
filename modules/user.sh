@@ -42,6 +42,46 @@ generate_uuid() {
     fi
 }
 
+# 初始化默认admin用户
+init_admin_user() {
+    # 确保用户文件存在
+    if [[ ! -f "$USERS_FILE" ]]; then
+        echo '{"users":[]}' > "$USERS_FILE"
+    fi
+
+    # 检查是否已存在admin用户
+    local admin_exists=$(jq -r '.users[] | select(.username == "admin") | .username' "$USERS_FILE" 2>/dev/null)
+
+    if [[ -n "$admin_exists" ]]; then
+        # admin用户已存在，不需要初始化
+        return 0
+    fi
+
+    # 创建admin用户
+    local admin_uuid=$(generate_uuid)
+    local admin_password=$(openssl rand -base64 16 | tr -d '/+=' | cut -c1-16)
+    local admin_email="admin@system"
+
+    local admin_data=$(jq -n \
+        --arg id "$admin_uuid" \
+        --arg username "admin" \
+        --arg password "$admin_password" \
+        --arg email "$admin_email" \
+        '{id: $id, username: $username, password: $password, email: $email, level: 0, created: (now|todate), enabled: true}')
+
+    jq ".users += [$admin_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+    print_success "默认admin用户初始化成功"
+    echo -e "${CYAN}Admin用户信息：${NC}"
+    echo -e "  用户名: ${YELLOW}admin${NC}"
+    echo -e "  密码: ${YELLOW}$admin_password${NC}"
+    echo -e "  UUID: ${YELLOW}$admin_uuid${NC}"
+    echo -e "  邮箱: ${YELLOW}$admin_email${NC}"
+    echo -e "${YELLOW}请妥善保存admin密码！${NC}"
+    echo ""
+}
+
 # 显示全局用户列表（新架构）
 list_global_users() {
     if [[ ! -f "$USERS_FILE" ]]; then
@@ -88,6 +128,30 @@ add_global_user() {
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
 
+    # 输入用户名
+    read -p "请输入用户名: " username
+    while [[ -z "$username" ]]; do
+        print_error "用户名不能为空"
+        read -p "请输入用户名: " username
+    done
+
+    # 检查用户名是否已存在
+    if [[ -f "$USERS_FILE" ]]; then
+        local existing_username=$(jq -r ".users[] | select(.username == \"$username\") | .username" "$USERS_FILE" 2>/dev/null)
+        if [[ -n "$existing_username" ]]; then
+            print_error "用户名 '$username' 已存在"
+            return 1
+        fi
+    fi
+
+    # 输入密码
+    read -p "请输入密码 [留空自动生成]: " password
+    if [[ -z "$password" ]]; then
+        password=$(openssl rand -base64 16 | tr -d '/+=' | cut -c1-16)
+        print_info "自动生成密码: $password"
+    fi
+
+    # 输入邮箱
     read -p "请输入用户邮箱/备注: " email
     while [[ -z "$email" ]]; do
         print_error "邮箱不能为空"
@@ -118,9 +182,11 @@ add_global_user() {
 
     local user_data=$(jq -n \
         --arg id "$uuid" \
+        --arg username "$username" \
+        --arg password "$password" \
         --arg email "$email" \
         --argjson level "$level" \
-        '{id: $id, email: $email, level: $level, created: (now|todate), enabled: true}')
+        '{id: $id, username: $username, password: $password, email: $email, level: $level, created: (now|todate), enabled: true}')
 
     jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
@@ -128,6 +194,8 @@ add_global_user() {
     print_success "全局用户添加成功！"
     echo ""
     echo -e "${CYAN}用户信息：${NC}"
+    echo -e "  用户名: ${YELLOW}$username${NC}"
+    echo -e "  密码: ${YELLOW}$password${NC}"
     echo -e "  UUID: ${YELLOW}$uuid${NC}"
     echo -e "  邮箱: ${YELLOW}$email${NC}"
     echo -e "  等级: ${YELLOW}$level${NC}"

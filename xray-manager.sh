@@ -634,6 +634,9 @@ main() {
     # 加载所有模块
     source_modules
 
+    # 初始化默认admin用户
+    init_admin_user
+
     log_info "Xray 管理脚本启动 (v1.2.2)"
 
     while true; do

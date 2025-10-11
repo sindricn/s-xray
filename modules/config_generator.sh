@@ -66,6 +66,7 @@ generate_xray_config() {
                     if [[ -n "$user" && "$user" != "null" ]]; then
                         local email=$(echo "$user" | jq -r '.email')
                         local level=$(echo "$user" | jq -r '.level // 0')
+                        local password=$(echo "$user" | jq -r '.password // ""')
 
                         # 根据协议生成client配置
                         case $protocol in
@@ -91,8 +92,15 @@ generate_xray_config() {
                                 fi
                                 ;;
                             trojan)
-                                # Trojan使用password而不是id
-                                local password="$uuid"
+                                # Trojan使用password（从用户表读取）
+                                local client=$(jq -n \
+                                    --arg password "$password" \
+                                    --arg email "$email" \
+                                    --argjson level "$level" \
+                                    '{password: $password, email: $email, level: $level}')
+                                ;;
+                            shadowsocks)
+                                # Shadowsocks也使用password
                                 local client=$(jq -n \
                                     --arg password "$password" \
                                     --arg email "$email" \

@@ -1,5 +1,104 @@
 # 更新日志
 
+## [v1.3.1] - 2025-10-11
+
+### 🔧 重要修正：快速搭建流程优化
+
+#### 修正内容 ⚠️
+修正了v1.3.0中的快速搭建逻辑问题，实现了正确的用户管理架构。
+
+**核心修正**：
+- ✅ **默认admin用户** - 系统初始化时自动创建admin用户
+- ✅ **快速搭建优化** - 节点创建时自动绑定admin用户，立即可用
+- ✅ **用户表完善** - 增加username和password字段
+- ✅ **配置生成修复** - config_generator.sh正确支持password字段
+- ✅ **分享链接生成** - 节点创建完成后立即显示可用的分享链接
+
+#### 数据结构调整 📊
+
+**users.json（全局用户表）** - 新增字段：
+```json
+{
+  "users": [
+    {
+      "id": "uuid",
+      "username": "admin",        // ← 新增
+      "password": "password",     // ← 新增
+      "email": "admin@system",
+      "level": 0,
+      "enabled": true,
+      "created": "2025-10-11T10:00:00Z"
+    }
+  ]
+}
+```
+
+#### 修正的功能 🔧
+
+**用户管理（modules/user.sh）**：
+- `add_global_user()` - 增加username和password输入
+  - 用户名必填且唯一
+  - 密码可选（留空自动生成）
+- `init_admin_user()` - 系统初始化admin用户 ✨ 新增
+  - 脚本启动时自动调用
+  - 检查admin是否存在，不存在则创建
+  - 随机生成初始密码并显示
+
+**节点管理（modules/node.sh）**：
+- `bind_admin_to_node()` - 绑定admin用户到节点 ✨ 新增辅助函数
+  - 自动获取admin用户信息
+  - 在node_users.json中建立绑定关系
+  - 返回用户信息供分享链接生成使用
+
+- `quick_add_vless_reality()` - 修正快速搭建流程 ✅
+  - 节点创建后自动绑定admin用户
+  - 立即生成并显示分享链接
+  - 节点创建完成即可使用
+
+- `add_vmess_node()` - 修正VMess节点创建 ✅
+  - 自动绑定admin用户
+  - 显示admin用户信息和分享链接
+
+- `add_trojan_node()` - 修正Trojan节点创建 ✅
+  - 自动绑定admin用户
+  - 使用admin密码生成Trojan链接
+
+- `add_shadowsocks_node()` - 修正Shadowsocks节点创建 ✅
+  - 自动绑定admin用户
+  - 使用admin密码生成SS链接
+
+**配置生成（modules/config_generator.sh）**：
+- `generate_xray_config()` - 修正password字段支持 ✅
+  - 从users.json正确读取password字段
+  - Trojan协议使用用户password而非UUID
+  - Shadowsocks协议使用用户password
+  - VLESS/VMess协议继续使用UUID
+
+#### 工作流程修正 🔄
+
+**旧流程（v1.3.0 - 有问题）**：
+```
+创建节点（无用户） → 提示用户去绑定 → 节点无法使用
+```
+
+**新流程（v1.3.1 - 已修正）**：
+```
+1. 系统启动 → 自动初始化admin用户
+2. 创建节点 → 自动绑定admin用户
+3. 生成配置 → 重启Xray
+4. 显示分享链接 → 节点立即可用 ✅
+5. （可选）添加更多用户 → 绑定到节点
+```
+
+#### 用户体验提升 ✨
+
+- **快速搭建更快**：节点创建后立即可用，无需额外步骤
+- **分享链接立即显示**：创建完成后直接显示可用的分享链接
+- **admin密码管理**：初始化时显示admin密码，可通过用户管理修改
+- **向后兼容**：保留用户绑定功能，支持多用户管理
+
+---
+
 ## [v1.3.0] - 2025-10-10
 
 ### 🏗️ 重大架构重构：节点用户分离
