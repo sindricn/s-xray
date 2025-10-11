@@ -481,11 +481,10 @@ menu_script() {
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
         echo -e "${GREEN}1.${NC} 更新脚本"
-        echo -e "${GREEN}2.${NC} 卸载脚本"
-        echo -e "${GREEN}3.${NC} 卸载脚本及依赖"
+        echo -e "${GREEN}2.${NC} 卸载管理（三级选项）"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-3]: " choice
+        read -p "请选择操作 [0-2]: " choice
 
         case $choice in
             1)
@@ -514,50 +513,19 @@ menu_script() {
                 fi
                 ;;
             2)
-                # 卸载脚本
+                # 卸载管理（调用uninstall.sh，提供三级选项）
                 clear
                 echo -e "${RED}╔═══════════════════════════════════════╗${NC}"
-                echo -e "${RED}║          警告：卸载脚本              ║${NC}"
+                echo -e "${RED}║          卸载管理                    ║${NC}"
                 echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
                 echo ""
-                echo -e "${YELLOW}此操作将卸载 s-xray 管理脚本${NC}"
-                echo -e "${YELLOW}包括所有配置文件和数据${NC}"
-                echo -e "${RED}Xray核心将保留${NC}"
+                echo -e "${YELLOW}即将进入卸载程序，提供以下选项：${NC}"
+                echo -e "  ${CYAN}1.${NC} 仅卸载管理脚本（保留Xray核心和配置）"
+                echo -e "  ${CYAN}2.${NC} 卸载脚本和配置文件（保留Xray核心）"
+                echo -e "  ${CYAN}3.${NC} 完全卸载（包括Xray核心）"
                 echo ""
 
-                if confirm "确认卸载脚本" "n"; then
-                    local script_path="${BASH_SOURCE[0]}"
-                    if [[ -L "$script_path" ]]; then
-                        script_path="$(readlink -f "$script_path")"
-                    fi
-                    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
-
-                    # 删除脚本目录
-                    rm -rf "$script_dir"
-                    # 删除软链接
-                    rm -f /usr/local/bin/xray
-
-                    print_success "脚本已卸载"
-                    echo -e "${YELLOW}Xray核心保留在系统中${NC}"
-                    exit 0
-                else
-                    print_info "已取消卸载"
-                fi
-                ;;
-            3)
-                # 卸载脚本及依赖
-                clear
-                echo -e "${RED}╔═══════════════════════════════════════╗${NC}"
-                echo -e "${RED}║      警告：完全卸载                  ║${NC}"
-                echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
-                echo ""
-                echo -e "${RED}此操作将完全卸载：${NC}"
-                echo -e "${YELLOW}  • s-xray 管理脚本${NC}"
-                echo -e "${YELLOW}  • Xray 核心程序${NC}"
-                echo -e "${YELLOW}  • 所有配置文件和数据${NC}"
-                echo ""
-
-                if confirm "确认完全卸载" "n"; then
+                if confirm "确认进入卸载程序" "n"; then
                     local script_path="${BASH_SOURCE[0]}"
                     if [[ -L "$script_path" ]]; then
                         script_path="$(readlink -f "$script_path")"
