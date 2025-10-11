@@ -62,11 +62,18 @@ urlencode() {
 
 # Base64 编码（无换行）
 base64_encode() {
-    local input="${1:-}"
-    if [[ -z "$input" ]]; then
-        return 1
+    # 支持从管道读取或从参数读取
+    if [[ -p /dev/stdin ]]; then
+        # 从管道读取
+        base64 -w 0 2>/dev/null || base64 | tr -d '\n'
+    else
+        # 从参数读取
+        local input="${1:-}"
+        if [[ -z "$input" ]]; then
+            return 1
+        fi
+        echo -n "$input" | base64 -w 0 2>/dev/null || echo -n "$input" | base64 | tr -d '\n'
     fi
-    echo -n "$input" | base64 -w 0 2>/dev/null || echo -n "$input" | base64
 }
 
 #================================================================
@@ -430,16 +437,20 @@ EOF
     done
 
     # Clash代理组和规则
+    # Clash代理组和规则（参考s-hy2项目格式）
     cat <<'EOF'
+
 proxy-groups:
-  - name: "PROXY"
+  - name: "🚀 节点选择"
     type: select
     proxies:
-      - "AUTO"
+      - "🔄 自动选择"
 EOF
 
-    # 添加所有节点到代理组
-    echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
+    # 添加所有节点到选择组
+    local proxy_list=()
+    while IFS= read -r node; do
+        [[ -z "$node" || "$node" == "null" ]] && continue
         local protocol=$(echo "$node" | jq -r '.protocol')
         local port=$(echo "$node" | jq -r '.port')
         local security=$(echo "$node" | jq -r '.security // "none"')
@@ -448,47 +459,79 @@ EOF
         [[ "$protocol" == "vless" && "$security" == "reality" ]] && continue
 
         case $protocol in
-            vless) echo "      - \"VLESS-${port}\"" ;;
-            vmess) echo "      - \"VMess-${port}\"" ;;
-            trojan) echo "      - \"Trojan-${port}\"" ;;
-            shadowsocks) echo "      - \"SS-${port}\"" ;;
+            vless) proxy_list+=("VLESS-${port}") ;;
+            vmess) proxy_list+=("VMess-${port}") ;;
+            trojan) proxy_list+=("Trojan-${port}") ;;
+            shadowsocks) proxy_list+=("SS-${port}") ;;
         esac
+    done < <(echo "$nodes_array" | jq -c '.[]')
+
+    # 输出节点列表到选择组
+    for proxy in "${proxy_list[@]}"; do
+        echo "      - \"$proxy\""
     done
 
     cat <<'EOF'
+      - "🎯 全球直连"
 
-  - name: "AUTO"
+  - name: "🔄 自动选择"
     type: url-test
     proxies:
 EOF
 
-    # 再次添加所有节点到自动选择组
-    echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
-        local protocol=$(echo "$node" | jq -r '.protocol')
-        local port=$(echo "$node" | jq -r '.port')
-        local security=$(echo "$node" | jq -r '.security // "none"')
-
-        [[ "$protocol" == "vless" && "$security" == "reality" ]] && continue
-
-        case $protocol in
-            vless) echo "      - \"VLESS-${port}\"" ;;
-            vmess) echo "      - \"VMess-${port}\"" ;;
-            trojan) echo "      - \"Trojan-${port}\"" ;;
-            shadowsocks) echo "      - \"SS-${port}\"" ;;
-        esac
+    # 再次输出节点列表到自动选择组
+    for proxy in "${proxy_list[@]}"; do
+        echo "      - \"$proxy\""
     done
 
     cat <<'EOF'
     url: 'http://www.gstatic.com/generate_204'
     interval: 300
+    tolerance: 50
+
+  - name: "🌍 国外媒体"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "🔄 自动选择"
+      - "🎯 全球直连"
+
+  - name: "🎯 全球直连"
+    type: select
+    proxies:
+      - "DIRECT"
+
+  - name: "🛑 全球拦截"
+    type: select
+    proxies:
+      - "REJECT"
+      - "🎯 全球直连"
 
 rules:
-  - DOMAIN-SUFFIX,google.com,PROXY
-  - DOMAIN-KEYWORD,google,PROXY
-  - DOMAIN,google.com,PROXY
-  - DOMAIN-SUFFIX,ad.com,REJECT
-  - GEOIP,CN,DIRECT
-  - MATCH,PROXY
+  # 局域网直连
+  - DOMAIN-SUFFIX,local,🎯 全球直连
+  - IP-CIDR,192.168.0.0/16,🎯 全球直连,no-resolve
+  - IP-CIDR,10.0.0.0/8,🎯 全球直连,no-resolve
+  - IP-CIDR,172.16.0.0/12,🎯 全球直连,no-resolve
+  - IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve
+
+  # 常用国外服务
+  - DOMAIN-KEYWORD,youtube,🌍 国外媒体
+  - DOMAIN-KEYWORD,google,🌍 国外媒体
+  - DOMAIN-KEYWORD,twitter,🌍 国外媒体
+  - DOMAIN-KEYWORD,github,🌍 国外媒体
+  - DOMAIN-SUFFIX,openai.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,chatgpt.com,🌍 国外媒体
+
+  # 广告拦截
+  - DOMAIN-KEYWORD,ad,🛑 全球拦截
+  - DOMAIN-KEYWORD,ads,🛑 全球拦截
+
+  # 国内直连
+  - GEOIP,CN,🎯 全球直连
+
+  # 其他流量走代理
+  - MATCH,🚀 节点选择
 EOF
 }
 
@@ -845,12 +888,13 @@ generate_subscription_with_user() {
 
     case $sub_type in
         1)
-            # 通用订阅 - Base64编码
-            sub_content=$(printf "%s\n" "${share_links[@]}" | base64_encode)
+            # 通用订阅 - Base64编码（每行一个链接，然后整体编码）
+            local raw_links=$(printf "%s\n" "${share_links[@]}")
+            sub_content=$(echo -n "$raw_links" | base64_encode)
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}.txt"
             ;;
         2)
-            # 原始订阅
+            # 原始订阅（纯文本，每行一个链接）
             sub_content=$(printf "%s\n" "${share_links[@]}")
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
             ;;

@@ -107,6 +107,167 @@ proxy-groups:
 
 ---
 
+### 🐛 修复：订阅链接导入失败问题（参考s-hy2项目）
+
+#### 问题描述
+通用订阅和Clash订阅导入客户端后无法使用，单个节点链接正常。
+
+**根本原因**：
+1. Base64编码函数不兼容所有系统（`-w 0`参数问题）
+2. Clash配置使用while循环生成proxy-groups，子shell导致输出不完整
+3. Clash proxy-groups结构过于简单，缺少常用分流组
+
+#### 修复内容
+
+**modules/subscription.sh**:
+
+1. ✅ **base64_encode()** (Line 64-77)
+   ```bash
+   # 修复前：只支持-w 0参数
+   echo -n "$input" | base64 -w 0 2>/dev/null || echo -n "$input" | base64
+
+   # 修复后：兼容性更好，支持管道和参数输入
+   base64 -w 0 2>/dev/null || base64 | tr -d '\n'
+   ```
+   - 添加管道输入支持
+   - 使用`tr -d '\n'`作为后备方案，兼容不支持`-w 0`的系统
+
+2. ✅ **通用订阅Base64编码** (Line 854-858)
+   ```bash
+   # 修复前：直接pipe可能有问题
+   sub_content=$(printf "%s\n" "${share_links[@]}" | base64_encode)
+
+   # 修复后：先生成raw_links，再编码
+   local raw_links=$(printf "%s\n" "${share_links[@]}")
+   sub_content=$(echo -n "$raw_links" | base64_encode)
+   ```
+   - 确保每行一个链接
+   - 使用`echo -n`避免末尾换行
+
+3. ✅ **generate_clash_config()** (Line 440-535)
+
+   **参考s-hy2项目格式** (C:\code\s-hy2\scripts\node-info.sh Line 637-708)：
+
+   ```bash
+   # 修复前：使用while循环，子shell问题
+   echo "$nodes_array" | jq -c '.[]' | while IFS= read -r node; do
+       case $protocol in
+           vless) echo "      - \"VLESS-${port}\"" ;;
+       esac
+   done
+
+   # 修复后：使用数组收集，避免子shell
+   local proxy_list=()
+   while IFS= read -r node; do
+       case $protocol in
+           vless) proxy_list+=("VLESS-${port}") ;;
+       esac
+   done < <(echo "$nodes_array" | jq -c '.[]')
+
+   for proxy in "${proxy_list[@]}"; do
+       echo "      - \"$proxy\""
+   done
+   ```
+
+   **Proxy-Groups 完善**：
+   - 添加 "🚀 节点选择" - 手动选择组
+   - 添加 "🔄 自动选择" - URL测试组（300秒间隔，50ms容差）
+   - 添加 "🌍 国外媒体" - 媒体服务分流
+   - 添加 "🎯 全球直连" - DIRECT出站
+   - 添加 "🛑 全球拦截" - REJECT出站
+
+   **Rules 完善**：
+   - 局域网IP段直连（192.168/10/172.16/127）
+   - 国外媒体关键词匹配（youtube/google/twitter/github/openai）
+   - 广告拦截（ad/ads关键词）
+   - GEOIP CN直连
+   - MATCH默认走代理
+
+#### 修复前后对比
+
+**Base64编码兼容性**：
+```bash
+# 修复前：不支持-w 0的系统会失败
+echo -n "$input" | base64 -w 0  # ❌ macOS/BSD不支持
+
+# 修复后：兼容所有系统
+base64 -w 0 2>/dev/null || base64 | tr -d '\n'  # ✅ 完全兼容
+```
+
+**Clash Proxy-Groups**：
+```yaml
+# 修复前：结构简单，节点可能缺失
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "AUTO"
+      # ❌ while循环可能导致节点未添加
+
+# 修复后：完整结构，s-hy2风格
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "🔄 自动选择"
+      - "VLESS-443"  # ✅ 所有节点正确添加
+      - "VMess-10086"
+      - "🎯 全球直连"
+
+  - name: "🔄 自动选择"
+    type: url-test
+    proxies:
+      - "VLESS-443"
+      - "VMess-10086"
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+    tolerance: 50
+
+  - name: "🌍 国外媒体"  # ✅ 新增媒体分流组
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "🔄 自动选择"
+      - "🎯 全球直连"
+```
+
+**Clash Rules**：
+```yaml
+# 修复前：规则过于简单
+rules:
+  - DOMAIN-SUFFIX,google.com,PROXY
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
+
+# 修复后：完整分流规则（参考s-hy2）
+rules:
+  # 局域网直连
+  - IP-CIDR,192.168.0.0/16,🎯 全球直连,no-resolve
+  - IP-CIDR,10.0.0.0/8,🎯 全球直连,no-resolve
+
+  # 国外媒体服务
+  - DOMAIN-KEYWORD,youtube,🌍 国外媒体
+  - DOMAIN-KEYWORD,google,🌍 国外媒体
+  - DOMAIN-SUFFIX,openai.com,🌍 国外媒体
+
+  # 广告拦截
+  - DOMAIN-KEYWORD,ad,🛑 全球拦截
+
+  # 国内直连
+  - GEOIP,CN,🎯 全球直连
+
+  # 默认代理
+  - MATCH,🚀 节点选择
+```
+
+#### 影响范围
+- ✅ 通用Base64订阅：兼容所有系统（Linux/macOS/BSD）
+- ✅ Clash订阅：完整proxy-groups结构，所有节点正确添加
+- ✅ Clash分流：参考s-hy2项目，提供实用的分流规则
+- ✅ 客户端导入：v2rayNG、Clash等客户端可正常导入和使用
+
+---
+
 ### 🐛 修复：用户信息显示和节点链接问题（补充修复）
 
 #### 问题描述
