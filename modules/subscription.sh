@@ -335,6 +335,17 @@ generate_clash_config() {
 
     local server_ip=$(get_public_ip)
 
+    # 验证必需参数
+    if [[ -z "$user_id" ]]; then
+        echo "# ERROR: user_id is required" >&2
+        return 1
+    fi
+
+    # 对于需要password的协议，如果为空则尝试获取
+    if [[ -z "$user_password" ]]; then
+        user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
+    fi
+
     # Clash YAML头部
     cat <<EOF
 port: 7890
@@ -382,7 +393,7 @@ EOF
     uuid: ${user_id}
     udp: true
     tls: true
-    skip-cert-verify: false"
+    skip-cert-verify: true"
                     [[ -n "$tls_domain" ]] && node_config="${node_config}
     servername: ${tls_domain}"
                     if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
@@ -415,6 +426,19 @@ EOF
                 local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
                 local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
                 local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
+
+                # 验证 VMess cipher 是否被 Clash 支持
+                case "$cipher" in
+                    auto|aes-128-gcm|chacha20-poly1305|none)
+                        # 支持的加密方式
+                        ;;
+                    *)
+                        # 不支持的加密方式，使用 auto
+                        cipher="auto"
+                        echo "# WARNING: VMess-${port} cipher not supported, using auto" >&2
+                        ;;
+                esac
+
                 node_config="  - name: \"${node_name}\"
     type: vmess
     server: ${server_ip}
@@ -431,6 +455,12 @@ EOF
                 fi
                 ;;
             trojan)
+                # Trojan 必需 password，如果为空则跳过
+                if [[ -z "$user_password" ]]; then
+                    echo "# WARNING: Skipping Trojan-${port} - password required but not provided" >&2
+                    continue
+                fi
+
                 local node_name="Trojan-${port}"
                 proxy_list+=("$node_name")
 
@@ -441,15 +471,32 @@ EOF
     port: ${port}
     password: ${user_password}
     udp: true
-    skip-cert-verify: false"
+    skip-cert-verify: true"
                 [[ -n "$tls_domain" ]] && node_config="${node_config}
     sni: ${tls_domain}"
                 ;;
             shadowsocks)
+                # Shadowsocks 必需 password，如果为空则跳过
+                if [[ -z "$user_password" ]]; then
+                    echo "# WARNING: Skipping SS-${port} - password required but not provided" >&2
+                    continue
+                fi
+
                 local node_name="SS-${port}"
                 proxy_list+=("$node_name")
 
                 local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
+                # 验证 cipher 是否被 Clash 支持
+                case "$cipher" in
+                    aes-128-gcm|aes-192-gcm|aes-256-gcm|aes-128-cfb|aes-192-cfb|aes-256-cfb|aes-128-ctr|aes-192-ctr|aes-256-ctr|rc4-md5|chacha20-ietf|xchacha20|chacha20-ietf-poly1305|xchacha20-ietf-poly1305)
+                        # 支持的加密方式
+                        ;;
+                    *)
+                        # 不支持的加密方式，使用默认值
+                        cipher="aes-256-gcm"
+                        echo "# WARNING: SS-${port} cipher not supported, using aes-256-gcm" >&2
+                        ;;
+                esac
                 node_config="  - name: \"${node_name}\"
     type: ss
     server: ${server_ip}
@@ -462,6 +509,13 @@ EOF
 
         [[ -n "$node_config" ]] && proxy_configs+=("$node_config")
     done < <(echo "$nodes_array" | jq -c '.[]')
+
+    # 验证是否有有效节点
+    if [[ ${#proxy_configs[@]} -eq 0 ]]; then
+        echo "# ERROR: No valid nodes generated for Clash configuration" >&2
+        echo "# Please check node configuration and user password settings" >&2
+        return 1
+    fi
 
     # 输出所有节点配置
     for config in "${proxy_configs[@]}"; do
