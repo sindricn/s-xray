@@ -74,18 +74,18 @@ while IFS= read -r node; do
     echo "  传输: $transport"
 
     # 检查 Clash 兼容性
-    if [[ "$protocol" == "vless" && "$security" == "reality" ]]; then
-        echo -e "  ${RED}✗ Clash 兼容性: 不支持（Reality 协议）${NC}"
-        ((clash_incompatible++))
-    else
-        echo -e "  ${GREEN}✓ Clash 兼容性: 支持${NC}"
-        ((clash_compatible++))
+    echo -e "  ${GREEN}✓ Clash 兼容性: 支持${NC}"
+    ((clash_compatible++))
 
-        # 检查是否需要 password
-        if [[ "$protocol" == "trojan" || "$protocol" == "shadowsocks" ]]; then
-            echo -e "  ${YELLOW}⚠ 需要 password 字段${NC}"
-            ((needs_password++))
-        fi
+    # Reality 节点需要额外检查
+    if [[ "$protocol" == "vless" && "$security" == "reality" ]]; then
+        echo -e "  ${YELLOW}⚠ Reality 节点需要 public_key 字段（Clash Meta 支持）${NC}"
+    fi
+
+    # 检查是否需要 password
+    if [[ "$protocol" == "trojan" || "$protocol" == "shadowsocks" ]]; then
+        echo -e "  ${YELLOW}⚠ 需要 password 字段${NC}"
+        ((needs_password++))
     fi
 
     echo ""
@@ -97,8 +97,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "统计结果"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo -e "${GREEN}Clash 兼容节点: $clash_compatible${NC}"
-echo -e "${RED}Clash 不兼容节点: $clash_incompatible${NC}"
+echo -e "${GREEN}Clash 兼容节点: $clash_compatible (包括 Reality, 需 Clash Meta)${NC}"
 echo -e "${YELLOW}需要 password 的节点: $needs_password${NC}"
 echo ""
 
@@ -140,19 +139,15 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 if [[ $clash_compatible -eq 0 ]]; then
-    echo -e "${RED}✗ 没有 Clash 兼容的节点${NC}"
+    echo -e "${RED}✗ 没有节点${NC}"
     echo ""
-    echo "建议："
-    echo "  1. 添加 VLESS TLS、VMess 或 Trojan 节点"
-    echo "  2. Reality 节点不被 Clash 支持，但可以使用通用订阅格式"
-elif [[ $clash_incompatible -gt 0 ]]; then
-    echo -e "${YELLOW}⚠ 部分节点不兼容 Clash${NC}"
+    echo "请先添加节点"
+else
+    echo -e "${GREEN}✓ 所有节点都兼容 Clash Meta${NC}"
     echo ""
     echo "说明："
-    echo "  - Reality 节点会在 Clash 订阅中自动跳过"
-    echo "  - 可以正常生成包含其他协议节点的 Clash 订阅"
-else
-    echo -e "${GREEN}✓ 所有节点都兼容 Clash${NC}"
+    echo "  - VLESS Reality 节点需要 Clash Meta 支持"
+    echo "  - 建议使用 Clash Meta / Clash Verge 等支持 Reality 的客户端"
 fi
 
 if [[ $needs_password -gt 0 ]]; then

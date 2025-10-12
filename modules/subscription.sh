@@ -378,21 +378,52 @@ EOF
         # 调试信息
         echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
 
-        # Reality节点Clash不支持，跳过
-        if [[ "$protocol" == "vless" && "$security" == "reality" ]]; then
-            echo "# INFO: Skipping Reality node on port $port (Clash不支持)" >&2
-            ((skipped_count++))
-            continue
-        fi
-
         local node_config=""
 
         case $protocol in
             vless)
-                local node_name="VLESS-${port}"
-                proxy_list+=("$node_name")
+                # VLESS Reality 支持（Clash Meta）
+                if [[ "$security" == "reality" ]]; then
+                    local node_name="VLESS-Reality-${port}"
+                    proxy_list+=("$node_name")
 
-                if [[ "$security" == "tls" ]]; then
+                    local dest=$(echo "$extra" | jq -r '.dest // ""')
+                    local server_names=$(echo "$extra" | jq -r '.server_names[0] // ""')
+                    local public_key=$(echo "$extra" | jq -r '.public_key // ""')
+                    local short_id=$(echo "$extra" | jq -r '.short_ids[0] // ""')
+                    local flow=$(echo "$extra" | jq -r '.flow // "xtls-rprx-vision"')
+
+                    # 验证必需参数
+                    if [[ -z "$public_key" ]]; then
+                        echo "# WARNING: Skipping Reality node on port $port - missing public_key" >&2
+                        ((skipped_count++))
+                        continue
+                    fi
+
+                    # SNI从server_names或dest提取
+                    local sni="$server_names"
+                    if [[ -z "$sni" && -n "$dest" ]]; then
+                        sni=$(echo "$dest" | cut -d':' -f1)
+                    fi
+
+                    node_config="  - name: \"${node_name}\"
+    type: vless
+    server: ${server_ip}
+    port: ${port}
+    uuid: ${user_id}
+    network: tcp
+    udp: true
+    tls: true
+    flow: ${flow}
+    servername: ${sni}
+    reality-opts:
+      public-key: ${public_key}
+      short-id: ${short_id}
+    client-fingerprint: chrome"
+                elif [[ "$security" == "tls" ]]; then
+                    # VLESS TLS
+                    local node_name="VLESS-${port}"
+                    proxy_list+=("$node_name")
                     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
                     node_config="  - name: \"${node_name}\"
@@ -413,6 +444,9 @@ EOF
                     fi
                 else
                     # Plain VLESS (no TLS)
+                    local node_name="VLESS-${port}"
+                    proxy_list+=("$node_name")
+
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
                     node_config="  - name: \"${node_name}\"
     type: vless
@@ -527,7 +561,7 @@ EOF
         echo "# ERROR: No valid nodes generated for Clash configuration" >&2
         echo "# Processed $processed_count nodes, skipped $skipped_count" >&2
         echo "# Possible reasons:" >&2
-        echo "#   1. All nodes are Reality protocol (not supported by Clash)" >&2
+        echo "#   1. Reality nodes missing public_key field" >&2
         echo "#   2. Trojan/SS nodes missing password field" >&2
         echo "#   3. Node data structure mismatch" >&2
         echo "# Please check: /usr/local/xray/data/nodes.json" >&2
@@ -1023,9 +1057,10 @@ generate_subscription_with_user() {
                 echo "$clash_output" | grep -E "^#" | sed 's/^# /  /'
                 echo ""
                 echo -e "${CYAN}提示：${NC}"
-                echo "  1. 检查是否所有节点都是 Reality 协议（Clash 不支持）"
+                echo "  1. Reality 节点需要 public_key 字段"
                 echo "  2. Trojan/SS 节点需要 password 字段"
-                echo "  3. 可以尝试使用【通用订阅】或【原始订阅】格式"
+                echo "  3. 检查节点数据结构是否完整"
+                echo "  4. 可以尝试使用【通用订阅】或【原始订阅】格式"
                 echo ""
                 return 1
             fi
