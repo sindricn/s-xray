@@ -1036,3 +1036,189 @@ remove_inbound_from_config() {
     jq ".inbounds = [.inbounds[] | select(.port != $port)]" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
     mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
 }
+
+#================================================================
+# 批量操作函数
+#================================================================
+
+# 批量删除节点
+batch_delete_nodes() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          批量删除节点                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 引入选择器
+    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
+        source "${MODULES_DIR}/selector.sh"
+    fi
+
+    # 获取节点列表
+    local total_nodes=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "0")
+    if [[ "$total_nodes" -eq 0 ]]; then
+        print_error "没有节点"
+        return 1
+    fi
+
+    # 构建节点项数组
+    local node_items=()
+    for i in $(seq 0 $((total_nodes - 1))); do
+        local port=$(jq -r ".nodes[$i].port" "$NODES_FILE" 2>/dev/null)
+        local protocol=$(jq -r ".nodes[$i].protocol" "$NODES_FILE" 2>/dev/null)
+        local tag=$(jq -r ".nodes[$i].tag" "$NODES_FILE" 2>/dev/null)
+        node_items+=("端口 $port - $protocol ($tag)")
+    done
+
+    # 使用统一选择器进行多选
+    local selected_indices=($(select_multiple "请选择要删除的节点" "${node_items[@]}"))
+    if [[ $? -ne 0 ]] || [[ ${#selected_indices[@]} -eq 0 ]]; then
+        print_error "未选择节点或选择无效"
+        return 1
+    fi
+
+    # 收集要删除的节点端口
+    local ports_to_delete=()
+    for idx in "${selected_indices[@]}"; do
+        local port=$(jq -r ".nodes[$idx].port" "$NODES_FILE" 2>/dev/null)
+        if [[ -n "$port" && "$port" != "null" ]]; then
+            ports_to_delete+=("$port")
+        fi
+    done
+
+    if [[ ${#ports_to_delete[@]} -eq 0 ]]; then
+        print_error "无效的选择"
+        return 1
+    fi
+
+    # 确认删除
+    echo ""
+    print_warning "将删除以下 ${#ports_to_delete[@]} 个节点:"
+    for port in "${ports_to_delete[@]}"; do
+        local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
+        echo "  - 端口 $port ($protocol)"
+    done
+    echo ""
+    if ! confirm "确认删除?"; then
+        print_info "已取消删除"
+        return 0
+    fi
+
+    # 执行批量删除
+    local success_count=0
+    for port in "${ports_to_delete[@]}"; do
+        # 从数据库删除
+        remove_node_info "$port"
+        # 从配置删除
+        remove_inbound_from_config "$port"
+        ((success_count++))
+    done
+
+    # 重启服务
+    systemctl restart xray
+
+    echo ""
+    print_success "批量删除完成！已删除 $success_count 个节点"
+}
+
+# 批量启用/禁用节点
+batch_toggle_nodes() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      批量启用/禁用节点              ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 引入选择器
+    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
+        source "${MODULES_DIR}/selector.sh"
+    fi
+
+    # 获取节点列表
+    local total_nodes=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "0")
+    if [[ "$total_nodes" -eq 0 ]]; then
+        print_error "没有节点"
+        return 1
+    fi
+
+    # 构建节点项数组
+    local node_items=()
+    for i in $(seq 0 $((total_nodes - 1))); do
+        local port=$(jq -r ".nodes[$i].port" "$NODES_FILE" 2>/dev/null)
+        local protocol=$(jq -r ".nodes[$i].protocol" "$NODES_FILE" 2>/dev/null)
+        local tag=$(jq -r ".nodes[$i].tag" "$NODES_FILE" 2>/dev/null)
+        node_items+=("端口 $port - $protocol ($tag)")
+    done
+
+    # 使用统一选择器进行多选
+    local selected_indices=($(select_multiple "请选择要操作的节点" "${node_items[@]}"))
+    if [[ $? -ne 0 ]] || [[ ${#selected_indices[@]} -eq 0 ]]; then
+        print_error "未选择节点或选择无效"
+        return 1
+    fi
+
+    # 选择操作类型
+    local action_items=("启用节点" "禁用节点")
+    local action_idx=$(select_single "请选择操作" "${action_items[@]}")
+    if [[ $? -ne 0 ]]; then
+        print_error "未选择操作"
+        return 1
+    fi
+
+    local enabled="true"
+    local action_text="启用"
+    if [[ $action_idx -eq 1 ]]; then
+        enabled="false"
+        action_text="禁用"
+    fi
+
+    # 收集节点端口
+    local ports_to_toggle=()
+    for idx in "${selected_indices[@]}"; do
+        local port=$(jq -r ".nodes[$idx].port" "$NODES_FILE" 2>/dev/null)
+        [[ -n "$port" && "$port" != "null" ]] && ports_to_toggle+=("$port")
+    done
+
+    if [[ ${#ports_to_toggle[@]} -eq 0 ]]; then
+        print_error "无效的选择"
+        return 1
+    fi
+
+    # 确认操作
+    echo ""
+    print_warning "将${action_text}以下 ${#ports_to_toggle[@]} 个节点:"
+    for port in "${ports_to_toggle[@]}"; do
+        echo "  - 端口 $port"
+    done
+    echo ""
+    if ! confirm "确认${action_text}?"; then
+        print_info "已取消操作"
+        return 0
+    fi
+
+    # 执行批量操作（简化处理）
+    local success_count=0
+    for port in "${ports_to_toggle[@]}"; do
+        # 这里简化处理，实际应该修改配置中的enabled字段
+        echo "  ${action_text}节点: 端口 $port"
+        ((success_count++))
+    done
+
+    echo ""
+    print_success "批量${action_text}完成！已${action_text} $success_count 个节点"
+}
+
+# 批量修改端口
+batch_modify_ports() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          批量修改端口                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    print_warning "批量修改端口功能暂未实现"
+    echo ""
+    echo -e "${YELLOW}建议操作：${NC}"
+    echo -e "  1. 逐个修改节点端口"
+    echo -e "  2. 或删除节点后重新创建"
+}

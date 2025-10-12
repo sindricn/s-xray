@@ -613,6 +613,150 @@ manage_server_domain() {
     esac
 }
 
+# 自动优选并设置SNI域名
+auto_select_sni_domain() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║    自动优选 SNI 伪装域名             ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 高质量域名列表（CDN节点多、稳定性高）
+    local premium_domains=(
+        www.microsoft.com
+        www.apple.com
+        www.cloudflare.com
+        www.bing.com
+        developer.apple.com
+        www.cisco.com
+        www.intel.com
+        www.amd.com
+        www.nvidia.com
+        login.microsoftonline.com
+    )
+
+    echo -e "${YELLOW}正在测试高质量域名...${NC}"
+    echo ""
+
+    # 创建临时结果文件
+    local temp_file=$(mktemp)
+    local count=0
+    local total=${#premium_domains[@]}
+
+    for domain in "${premium_domains[@]}"; do
+        ((count++))
+
+        # 测试延迟
+        local t1=$(date +%s%3N)
+        if timeout 2 openssl s_client -connect "$domain:443" -servername "$domain" </dev/null >/dev/null 2>&1; then
+            local t2=$(date +%s%3N)
+            local latency=$((t2 - t1))
+
+            # 验证DNS解析
+            if host "$domain" >/dev/null 2>&1; then
+                echo "$latency $domain" >> "$temp_file"
+                printf "  ${GREEN}✔${NC} [%2d/%2d] %-35s ${CYAN}%4d ms${NC}\n" "$count" "$total" "$domain" "$latency"
+            fi
+        else
+            printf "  ${RED}✘${NC} [%2d/%2d] %-35s ${YELLOW}超时${NC}\n" "$count" "$total" "$domain"
+        fi
+    done
+
+    echo ""
+
+    # 检查是否有成功结果
+    if [[ ! -s "$temp_file" ]]; then
+        print_error "所有域名测试失败，使用默认域名"
+        rm -f "$temp_file"
+        set_default_domain "www.microsoft.com"
+        return 1
+    fi
+
+    # 获取最佳域名（延迟最低）
+    local best_result=$(sort -n "$temp_file" | head -n 1)
+    local best_latency=$(echo "$best_result" | awk '{print $1}')
+    local best_domain=$(echo "$best_result" | awk '{print $2}')
+
+    echo -e "${GREEN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║        自动优选结果                  ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}推荐域名:${NC} ${YELLOW}$best_domain${NC}"
+    echo -e "${CYAN}延迟:${NC} ${YELLOW}${best_latency}ms${NC}"
+    echo ""
+
+    # 显示前5名
+    echo -e "${BLUE}延迟最低的前 5 个域名：${NC}"
+    echo ""
+    printf "${CYAN}%-5s %-40s %10s${NC}\n" "序号" "域名" "延迟"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    local index=1
+    sort -n "$temp_file" | head -n 5 | while read -r latency domain; do
+        if [[ $latency -lt 200 ]]; then
+            printf "${GREEN}%-5s %-40s %7s ms${NC}\n" "$index" "$domain" "$latency"
+        elif [[ $latency -lt 500 ]]; then
+            printf "${YELLOW}%-5s %-40s %7s ms${NC}\n" "$index" "$domain" "$latency"
+        else
+            printf "${RED}%-5s %-40s %7s ms${NC}\n" "$index" "$domain" "$latency"
+        fi
+        ((index++))
+    done
+
+    echo ""
+
+    # 自动设置或让用户选择
+    echo -e "${YELLOW}选择方式：${NC}"
+    echo -e "${GREEN}1.${NC} 自动使用推荐域名 (${best_domain})"
+    echo -e "${GREEN}2.${NC} 从上述列表中选择"
+    echo -e "${GREEN}3.${NC} 手动输入其他域名"
+    echo -e "${GREEN}0.${NC} 取消设置"
+    echo ""
+    read -p "请选择 [0-3, 默认: 1]: " choice
+    choice=${choice:-1}
+
+    case $choice in
+        1)
+            set_default_domain "$best_domain"
+            ;;
+        2)
+            echo ""
+            read -p "请输入域名序号 (1-5): " domain_index
+            if [[ "$domain_index" =~ ^[1-5]$ ]]; then
+                local selected_domain=$(sort -n "$temp_file" | head -n 5 | sed -n "${domain_index}p" | awk '{print $2}')
+                if [[ -n "$selected_domain" ]]; then
+                    set_default_domain "$selected_domain"
+                else
+                    print_error "无效的序号"
+                fi
+            else
+                print_error "无效的序号"
+            fi
+            ;;
+        3)
+            echo ""
+            read -p "请输入域名: " custom_domain
+            if [[ -n "$custom_domain" ]]; then
+                # 验证域名格式
+                if [[ "$custom_domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+                    set_default_domain "$custom_domain"
+                else
+                    print_error "域名格式不正确"
+                fi
+            fi
+            ;;
+        0)
+            print_info "已取消设置"
+            ;;
+        *)
+            print_error "无效选择"
+            ;;
+    esac
+
+    # 清理临时文件
+    rm -f "$temp_file"
+}
+
 # SNI 伪装域名管理
 manage_sni_domain() {
     clear
@@ -631,22 +775,27 @@ manage_sni_domain() {
     echo -e "${BLUE}当前默认 SNI 域名:${NC} ${YELLOW}$default_domain${NC}"
     echo ""
 
-    echo -e "${GREEN}1.${NC} 设置默认 SNI 域名"
-    echo -e "${GREEN}2.${NC} 查看推荐域名列表"
-    echo -e "${GREEN}3.${NC} 测试域名可用性"
+    echo -e "${GREEN}1.${NC} 自动优选并设置 (推荐)"
+    echo -e "${GREEN}2.${NC} 手动设置 SNI 域名"
+    echo -e "${GREEN}3.${NC} 查看推荐域名列表"
+    echo -e "${GREEN}4.${NC} 测试域名可用性"
+    echo -e "${GREEN}5.${NC} 完整域名测试 (20+域名)"
     echo -e "${GREEN}0.${NC} 返回"
     echo ""
-    read -p "请选择 [0-3]: " choice
+    read -p "请选择 [0-5]: " choice
 
     case $choice in
         1)
+            auto_select_sni_domain
+            ;;
+        2)
             echo ""
             read -p "请输入 SNI 域名: " domain
             if [[ -n "$domain" ]]; then
                 set_default_domain "$domain"
             fi
             ;;
-        2)
+        3)
             echo ""
             if [[ -f "${DATA_DIR}/recommended_domains.txt" ]]; then
                 echo -e "${CYAN}推荐的 SNI 域名：${NC}"
@@ -660,7 +809,7 @@ manage_sni_domain() {
                 echo -e "  • aws.amazon.com"
             fi
             ;;
-        3)
+        4)
             echo ""
             read -p "请输入要测试的域名: " domain
             if [[ -n "$domain" ]]; then
@@ -672,6 +821,9 @@ manage_sni_domain() {
                     print_error "TLS 握手失败: $domain"
                 fi
             fi
+            ;;
+        5)
+            test_best_reality_domains
             ;;
     esac
 }

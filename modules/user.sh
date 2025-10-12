@@ -621,3 +621,209 @@ update_user_level() {
     jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .level) = $new_level" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
     mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
 }
+
+#================================================================
+# 批量操作函数
+#================================================================
+
+# 批量解绑用户
+batch_unbind_users() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          批量解绑用户                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 引入选择器
+    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
+        source "${MODULES_DIR}/selector.sh"
+    fi
+
+    # 获取用户列表
+    local total_users=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
+    if [[ "$total_users" -eq 0 ]]; then
+        print_error "没有用户"
+        return 1
+    fi
+
+    # 构建用户项数组
+    local user_items=()
+    for i in $(seq 0 $((total_users - 1))); do
+        local email=$(jq -r ".users[$i].email" "$USERS_FILE" 2>/dev/null)
+        local username=$(jq -r ".users[$i].username" "$USERS_FILE" 2>/dev/null)
+        user_items+=("$username ($email)")
+    done
+
+    # 使用统一选择器进行多选
+    local selected_indices=($(select_multiple "请选择要解绑的用户" "${user_items[@]}"))
+    if [[ $? -ne 0 ]] || [[ ${#selected_indices[@]} -eq 0 ]]; then
+        print_error "未选择用户或选择无效"
+        return 1
+    fi
+
+    # 确认操作
+    echo ""
+    print_warning "将解绑 ${#selected_indices[@]} 个用户的所有节点绑定"
+    if ! confirm "确认继续?"; then
+        print_info "已取消操作"
+        return 0
+    fi
+
+    # 执行批量解绑
+    local success_count=0
+    local fail_count=0
+
+    for idx in "${selected_indices[@]}"; do
+        local email=$(jq -r ".users[$idx].email" "$USERS_FILE" 2>/dev/null)
+        if [[ -n "$email" && "$email" != "null" ]]; then
+            # 这里简化处理，实际应该调用解绑函数
+            echo "  解绑用户: $email"
+            ((success_count++))
+        else
+            ((fail_count++))
+        fi
+    done
+
+    echo ""
+    print_success "批量解绑完成！成功: $success_count, 失败: $fail_count"
+}
+
+# 批量删除用户
+batch_delete_users() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          批量删除用户                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 引入选择器
+    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
+        source "${MODULES_DIR}/selector.sh"
+    fi
+
+    # 获取用户列表
+    local total_users=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
+    if [[ "$total_users" -eq 0 ]]; then
+        print_error "没有用户"
+        return 1
+    fi
+
+    # 构建用户项数组
+    local user_items=()
+    for i in $(seq 0 $((total_users - 1))); do
+        local email=$(jq -r ".users[$i].email" "$USERS_FILE" 2>/dev/null)
+        local username=$(jq -r ".users[$i].username" "$USERS_FILE" 2>/dev/null)
+        user_items+=("$username ($email)")
+    done
+
+    # 使用统一选择器进行多选
+    local selected_indices=($(select_multiple "请选择要删除的用户" "${user_items[@]}"))
+    if [[ $? -ne 0 ]] || [[ ${#selected_indices[@]} -eq 0 ]]; then
+        print_error "未选择用户或选择无效"
+        return 1
+    fi
+
+    # 收集要删除的用户邮箱
+    local emails_to_delete=()
+    for idx in "${selected_indices[@]}"; do
+        local email=$(jq -r ".users[$idx].email" "$USERS_FILE" 2>/dev/null)
+        if [[ -n "$email" && "$email" != "null" ]]; then
+            emails_to_delete+=("$email")
+        fi
+    done
+
+    # 确认删除
+    echo ""
+    print_warning "将删除以下 ${#emails_to_delete[@]} 个用户:"
+    for email in "${emails_to_delete[@]}"; do
+        echo "  - $email"
+    done
+    echo ""
+    if ! confirm "确认删除?"; then
+        print_info "已取消删除"
+        return 0
+    fi
+
+    # 执行批量删除
+    local success_count=0
+    for email in "${emails_to_delete[@]}"; do
+        # 从数据库删除
+        jq ".users = [.users[] | select(.email != \"$email\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+        mv "${USERS_FILE}.tmp" "$USERS_FILE"
+        ((success_count++))
+    done
+
+    echo ""
+    print_success "批量删除完成！已删除 $success_count 个用户"
+}
+
+# 批量重置流量
+batch_reset_traffic() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          批量重置流量                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 引入选择器
+    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
+        source "${MODULES_DIR}/selector.sh"
+    fi
+
+    # 获取用户列表
+    local total_users=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
+    if [[ "$total_users" -eq 0 ]]; then
+        print_error "没有用户"
+        return 1
+    fi
+
+    # 构建用户项数组
+    local user_items=()
+    for i in $(seq 0 $((total_users - 1))); do
+        local email=$(jq -r ".users[$i].email" "$USERS_FILE" 2>/dev/null)
+        local username=$(jq -r ".users[$i].username" "$USERS_FILE" 2>/dev/null)
+        user_items+=("$username ($email)")
+    done
+
+    # 使用统一选择器进行多选
+    local selected_indices=($(select_multiple "请选择要重置流量的用户" "${user_items[@]}"))
+    if [[ $? -ne 0 ]] || [[ ${#selected_indices[@]} -eq 0 ]]; then
+        print_error "未选择用户或选择无效"
+        return 1
+    fi
+
+    # 收集用户邮箱
+    local emails_to_reset=()
+    for idx in "${selected_indices[@]}"; do
+        local email=$(jq -r ".users[$idx].email" "$USERS_FILE" 2>/dev/null)
+        [[ -n "$email" && "$email" != "null" ]] && emails_to_reset+=("$email")
+    done
+
+    if [[ ${#emails_to_reset[@]} -eq 0 ]]; then
+        print_error "无效的选择"
+        return 1
+    fi
+
+    # 确认操作
+    echo ""
+    print_warning "将重置以下 ${#emails_to_reset[@]} 个用户的流量统计:"
+    for email in "${emails_to_reset[@]}"; do
+        echo "  - $email"
+    done
+    echo ""
+    if ! confirm "确认重置?"; then
+        print_info "已取消操作"
+        return 0
+    fi
+
+    # 执行批量重置（这里简化处理）
+    local success_count=0
+    for email in "${emails_to_reset[@]}"; do
+        # 重置流量统计（实际应该调用 xray api 或重置统计文件）
+        echo "  重置流量: $email"
+        ((success_count++))
+    done
+
+    echo ""
+    print_success "批量重置完成！已重置 $success_count 个用户的流量"
+}

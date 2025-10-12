@@ -272,45 +272,36 @@ menu_core() {
     done
 }
 
-# 节点管理菜单
+# 节点管理菜单（重构精简版）
 menu_node() {
+    # 引入统一选择器
+    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
+        source "${MODULES_DIR}/selector.sh"
+    fi
+
     while true; do
         clear
-        echo -e "${CYAN}====== 节点管理 ======${NC}"
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          节点管理                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "${YELLOW}⚡ 快速搭建：${NC}"
-        echo -e "${GREEN}1.${NC} 【推荐】一键搭建 VLESS + Reality 节点"
-        echo ""
-        echo -e "${CYAN}📡 协议管理：${NC}"
-        echo -e "${GREEN}2.${NC} 添加 VLESS 节点 (自定义)"
-        echo -e "${GREEN}3.${NC} 添加 VMess 节点"
-        echo -e "${GREEN}4.${NC} 添加 Trojan 节点"
-        echo -e "${GREEN}5.${NC} 添加 Shadowsocks 节点"
-        echo ""
-        echo -e "${CYAN}🔧 节点管理：${NC}"
-        echo -e "${GREEN}6.${NC} 删除节点"
-        echo -e "${GREEN}7.${NC} 查看节点列表"
-        echo -e "${GREEN}8.${NC} 修改节点配置"
-        echo ""
-        echo -e "${CYAN}👥 节点用户管理：${NC}"
-        echo -e "${GREEN}9.${NC} 查看节点的用户列表"
-        echo -e "${GREEN}10.${NC} 查看所有绑定关系"
-        echo ""
+        echo -e "${GREEN}1.${NC} 快速搭建（VLESS + Reality 推荐）"
+        echo -e "${GREEN}2.${NC} 添加节点（VLESS/VMess/Trojan/SS）"
+        echo -e "${GREEN}3.${NC} 节点列表与详情"
+        echo -e "${GREEN}4.${NC} 修改节点（含删除）"
+        echo -e "${GREEN}5.${NC} 批量操作"
+        echo -e "${GREEN}6.${NC} 节点用户管理"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-10]: " choice
+        read -p "请选择操作 [0-6]: " choice
 
         case $choice in
             1) quick_add_vless_reality ;;
-            2) add_vless_node ;;
-            3) add_vmess_node ;;
-            4) add_trojan_node ;;
-            5) add_shadowsocks_node ;;
-            6) delete_node ;;
-            7) list_nodes ;;
-            8) modify_node ;;
-            9) show_node_users ;;
-            10) show_user_node_bindings ;;
+            2) menu_node_add ;;
+            3) menu_node_list_and_detail ;;
+            4) menu_node_modify ;;
+            5) menu_node_batch ;;
+            6) menu_node_users ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -319,58 +310,367 @@ menu_node() {
     done
 }
 
-# 用户管理菜单（新架构）
+# 添加节点子菜单
+menu_node_add() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          添加节点                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} VLESS 节点（支持 Reality/TLS/TCP）"
+        echo -e "${GREEN}2.${NC} VMess 节点"
+        echo -e "${GREEN}3.${NC} Trojan 节点"
+        echo -e "${GREEN}4.${NC} Shadowsocks 节点"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择协议 [0-4]: " choice
+
+        case $choice in
+            1) add_vless_node ;;
+            2) add_vmess_node ;;
+            3) add_trojan_node ;;
+            4) add_shadowsocks_node ;;
+            0) break ;;
+            *) print_error "无效选择" ;;
+        esac
+
+        read -p "按 Enter 键继续..."
+    done
+}
+
+# 节点列表与详情子菜单
+menu_node_list_and_detail() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║      节点列表与详情                  ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+
+        # 显示节点列表
+        list_nodes
+
+        echo ""
+        echo -e "${GREEN}1.${NC} 查看节点详情（用户、配置）"
+        echo -e "${GREEN}2.${NC} 查看节点分享链接"
+        echo -e "${GREEN}3.${NC} 刷新列表"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择操作 [0-3]: " choice
+
+        case $choice in
+            1)
+                echo ""
+                read -p "请输入节点序号: " node_idx
+                if [[ -n "$node_idx" ]]; then
+                    # 显示节点用户列表
+                    show_node_users
+                fi
+                read -p "按 Enter 键继续..."
+                ;;
+            2)
+                show_node_share_link
+                read -p "按 Enter 键继续..."
+                ;;
+            3)
+                continue
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选择"
+                read -p "按 Enter 键继续..."
+                ;;
+        esac
+    done
+}
+
+# 节点修改子菜单（整合删除）
+menu_node_modify() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          修改节点                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+
+        # 显示节点列表
+        list_nodes
+
+        echo ""
+        echo -e "${GREEN}1.${NC} 修改节点配置（端口、传输、加密）"
+        echo -e "${GREEN}2.${NC} 删除节点"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择操作 [0-2]: " choice
+
+        case $choice in
+            1)
+                modify_node
+                read -p "按 Enter 键继续..."
+                ;;
+            2)
+                delete_node
+                read -p "按 Enter 键继续..."
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选择"
+                read -p "按 Enter 键继续..."
+                ;;
+        esac
+    done
+}
+
+# 节点批量操作子菜单
+menu_node_batch() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          批量操作                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 批量删除节点"
+        echo -e "${GREEN}2.${NC} 批量启用/禁用节点"
+        echo -e "${GREEN}3.${NC} 批量修改端口"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择操作 [0-3]: " choice
+
+        case $choice in
+            1)
+                batch_delete_nodes
+                read -p "按 Enter 键继续..."
+                ;;
+            2)
+                batch_toggle_nodes
+                read -p "按 Enter 键继续..."
+                ;;
+            3)
+                batch_modify_ports
+                read -p "按 Enter 键继续..."
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选择"
+                read -p "按 Enter 键继续..."
+                ;;
+        esac
+    done
+}
+
+# 节点用户管理子菜单
+menu_node_users() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║      节点用户管理                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 查看节点的用户列表"
+        echo -e "${GREEN}2.${NC} 查看所有用户-节点绑定关系"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择操作 [0-2]: " choice
+
+        case $choice in
+            1)
+                show_node_users
+                read -p "按 Enter 键继续..."
+                ;;
+            2)
+                show_user_node_bindings
+                read -p "按 Enter 键继续..."
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选择"
+                read -p "按 Enter 键继续..."
+                ;;
+        esac
+    done
+}
+
+# 用户管理菜单（重构精简版）
 menu_user() {
+    # 引入统一选择器
+    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
+        source "${MODULES_DIR}/selector.sh"
+    fi
+
     while true; do
         clear
         echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
         echo -e "${CYAN}║          用户管理                    ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "${CYAN}👥 全局用户管理：${NC}"
-        echo -e "${GREEN}1.${NC} 查看全局用户列表"
-        echo -e "${GREEN}2.${NC} 添加全局用户"
-        echo -e "${GREEN}3.${NC} 删除全局用户"
-        echo -e "${GREEN}4.${NC} 修改用户配置"
-        echo ""
-        echo -e "${CYAN}🔗 用户节点绑定：${NC}"
-        echo -e "${GREEN}5.${NC} 绑定用户到节点"
-        echo -e "${GREEN}6.${NC} 从节点解绑用户"
-        echo -e "${GREEN}7.${NC} 查看用户可访问的节点"
-        echo -e "${GREEN}8.${NC} 批量绑定用户到多个节点"
-        echo ""
-        echo -e "${CYAN}🔧 其他功能：${NC}"
-        echo -e "${GREEN}9.${NC} 生成 UUID"
-        echo ""
-        echo -e "${CYAN}📋 旧版功能（兼容）：${NC}"
-        echo -e "${GREEN}11.${NC} 添加用户（旧版-绑定到节点）"
-        echo -e "${GREEN}12.${NC} 查看用户列表（旧版-按节点）"
-        echo ""
+        echo -e "${GREEN}1.${NC} 用户列表与详情"
+        echo -e "${GREEN}2.${NC} 添加用户"
+        echo -e "${GREEN}3.${NC} 修改用户（含删除、绑定、解绑）"
+        echo -e "${GREEN}4.${NC} 批量操作"
+        echo -e "${GREEN}5.${NC} 生成 UUID"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-12]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
-            1) list_global_users ;;
+            1) menu_user_list_and_detail ;;
             2) add_global_user ;;
-            3) delete_global_user ;;
-            4) modify_user ;;
-            5) bind_user_to_node ;;
-            6) unbind_user_from_node ;;
-            7) show_user_nodes ;;
-            8) batch_bind_user_to_nodes ;;
-            9)
+            3) menu_user_modify ;;
+            4) menu_user_batch ;;
+            5)
                 echo ""
                 local uuid=$(generate_uuid)
                 print_success "生成的UUID: $uuid"
                 ;;
-            11) add_user ;;  # 旧版功能
-            12) list_users ;;  # 旧版功能
             0) break ;;
             *) print_error "无效选择" ;;
         esac
 
         read -p "按 Enter 键继续..."
+    done
+}
+
+# 用户列表与详情子菜单
+menu_user_list_and_detail() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║      用户列表与详情                  ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+
+        # 显示全局用户列表
+        list_global_users
+
+        echo ""
+        echo -e "${GREEN}1.${NC} 查看用户详情（绑定节点、流量统计）"
+        echo -e "${GREEN}2.${NC} 刷新列表"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择操作 [0-2]: " choice
+
+        case $choice in
+            1)
+                echo ""
+                read -p "请输入用户邮箱: " user_email
+                if [[ -n "$user_email" ]]; then
+                    show_user_nodes "$user_email"
+                fi
+                read -p "按 Enter 键继续..."
+                ;;
+            2)
+                continue
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选择"
+                read -p "按 Enter 键继续..."
+                ;;
+        esac
+    done
+}
+
+# 用户修改子菜单（整合删除、绑定、解绑）
+menu_user_modify() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          修改用户                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+
+        # 显示用户列表供选择
+        list_global_users
+
+        echo ""
+        echo -e "${GREEN}1.${NC} 修改用户基本信息（用户名、密码、UUID）"
+        echo -e "${GREEN}2.${NC} 绑定用户到节点"
+        echo -e "${GREEN}3.${NC} 从节点解绑用户"
+        echo -e "${GREEN}4.${NC} 删除用户"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择操作 [0-4]: " choice
+
+        case $choice in
+            1)
+                modify_user
+                read -p "按 Enter 键继续..."
+                ;;
+            2)
+                bind_user_to_node
+                read -p "按 Enter 键继续..."
+                ;;
+            3)
+                unbind_user_from_node
+                read -p "按 Enter 键继续..."
+                ;;
+            4)
+                delete_global_user
+                read -p "按 Enter 键继续..."
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选择"
+                read -p "按 Enter 键继续..."
+                ;;
+        esac
+    done
+}
+
+# 用户批量操作子菜单
+menu_user_batch() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║          批量操作                    ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 批量绑定用户到多个节点"
+        echo -e "${GREEN}2.${NC} 批量解绑用户"
+        echo -e "${GREEN}3.${NC} 批量删除用户"
+        echo -e "${GREEN}4.${NC} 批量重置流量"
+        echo -e "${GREEN}0.${NC} 返回上级菜单"
+        echo ""
+        read -p "请选择操作 [0-4]: " choice
+
+        case $choice in
+            1)
+                batch_bind_user_to_nodes
+                read -p "按 Enter 键继续..."
+                ;;
+            2)
+                batch_unbind_users
+                read -p "按 Enter 键继续..."
+                ;;
+            3)
+                batch_delete_users
+                read -p "按 Enter 键继续..."
+                ;;
+            4)
+                batch_reset_traffic
+                read -p "按 Enter 键继续..."
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选择"
+                read -p "按 Enter 键继续..."
+                ;;
+        esac
     done
 }
 
@@ -556,39 +856,14 @@ menu_script() {
 
 # 出站规则管理菜单
 menu_outbound() {
-    while true; do
-        clear
-        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║          出站规则管理                ║${NC}"
-        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e "${GREEN}1.${NC} 查看规则"
-        echo -e "${GREEN}2.${NC} 添加规则"
-        echo -e "${GREEN}3.${NC} 修改规则"
-        echo -e "${GREEN}4.${NC} 删除规则"
-        echo -e "${GREEN}5.${NC} 启用规则"
-        echo -e "${GREEN}6.${NC} 禁用规则"
-        echo -e "${GREEN}0.${NC} 返回主菜单"
-        echo ""
-        read -p "请选择操作 [0-6]: " choice
-
-        case $choice in
-            1)
-                print_warning "出站规则功能正在开发中..."
-                echo -e "${YELLOW}即将支持：${NC}"
-                echo -e "  • 域名分流规则"
-                echo -e "  • IP分流规则"
-                echo -e "  • 直连/代理/拦截设置"
-                ;;
-            2|3|4|5|6)
-                print_warning "此功能正在开发中，敬请期待"
-                ;;
-            0) break ;;
-            *) print_error "无效选择" ;;
-        esac
-
+    # 调用出站管理模块
+    if [[ -f "${MODULES_DIR}/outbound.sh" ]]; then
+        source "${MODULES_DIR}/outbound.sh"
+        outbound_management_menu
+    else
+        print_error "出站管理模块未找到: ${MODULES_DIR}/outbound.sh"
         read -p "按 Enter 键继续..."
-    done
+    fi
 }
 
 # 主程序

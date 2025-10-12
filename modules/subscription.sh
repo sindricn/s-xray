@@ -1130,6 +1130,18 @@ generate_subscription_with_user() {
             echo -e "  • 所有支持订阅的客户端"
             echo -e "  • 可手动复制链接导入"
             ;;
+        3)
+            echo -e "${CYAN}支持的客户端（推荐）：${NC}"
+            echo -e "  • Clash Verge (推荐) - 跨平台"
+            echo -e "  • Clash Verge Rev - 社区维护版"
+            echo -e "  • Clash Meta - 核心版本"
+            echo -e "  • Clash Nyanpasu - 新一代客户端"
+            echo -e "  • Clash for Android - 需 Meta 核心"
+            echo ""
+            echo -e "${YELLOW}注意：${NC}"
+            echo -e "  • Reality 节点需要 Clash Meta 内核支持"
+            echo -e "  • 不支持原版 Clash Premium"
+            ;;
     esac
     echo ""
 }
@@ -1139,6 +1151,7 @@ get_sub_type_name() {
     case $1 in
         1) echo "通用订阅 (Base64)" ;;
         2) echo "原始订阅 (纯文本)" ;;
+        3) echo "Clash订阅 (YAML)" ;;
         *) echo "未知类型" ;;
     esac
 }
