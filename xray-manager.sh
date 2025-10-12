@@ -44,30 +44,32 @@ source_modules() {
     fi
 
     local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
-    local modules_dir="${script_dir}/modules"
 
-    if [[ ! -d "$modules_dir" ]]; then
-        echo -e "${RED}[ERROR]${NC} 模块目录不存在: $modules_dir"
+    # 导出 MODULES_DIR 为全局变量
+    export MODULES_DIR="${script_dir}/modules"
+
+    if [[ ! -d "$MODULES_DIR" ]]; then
+        echo -e "${RED}[ERROR]${NC} 模块目录不存在: $MODULES_DIR"
         echo -e "${RED}[ERROR]${NC} 脚本路径: $script_path"
         echo -e "${RED}[ERROR]${NC} 脚本目录: $script_dir"
         exit 1
     fi
 
     # 优先加载公共库
-    if [[ -f "${modules_dir}/common.sh" ]]; then
-        source "${modules_dir}/common.sh"
+    if [[ -f "${MODULES_DIR}/common.sh" ]]; then
+        source "${MODULES_DIR}/common.sh"
     else
-        echo -e "${RED}[ERROR]${NC} 公共库不存在: ${modules_dir}/common.sh"
+        echo -e "${RED}[ERROR]${NC} 公共库不存在: ${MODULES_DIR}/common.sh"
         exit 1
     fi
 
     # 加载输入验证模块
-    if [[ -f "${modules_dir}/input-validation.sh" ]]; then
-        source "${modules_dir}/input-validation.sh"
+    if [[ -f "${MODULES_DIR}/input-validation.sh" ]]; then
+        source "${MODULES_DIR}/input-validation.sh"
     fi
 
     # 加载其他模块
-    for module in "${modules_dir}"/*.sh; do
+    for module in "${MODULES_DIR}"/*.sh; do
         if [[ -f "$module" ]] && [[ "$module" != */common.sh ]] && [[ "$module" != */input-validation.sh ]]; then
             source "$module"
             log_debug "已加载模块: $(basename "$module")"
