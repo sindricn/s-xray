@@ -361,9 +361,13 @@ EOF
     # 关键修复：使用数组收集节点配置，避免subshell问题
     local proxy_configs=()
     local proxy_list=()
+    local skipped_count=0
+    local processed_count=0
 
     while IFS= read -r node; do
         [[ -z "$node" || "$node" == "null" ]] && continue
+
+        ((processed_count++))
 
         local protocol=$(echo "$node" | jq -r '.protocol')
         local port=$(echo "$node" | jq -r '.port')
@@ -371,8 +375,13 @@ EOF
         local transport=$(echo "$node" | jq -r '.transport // "tcp"')
         local extra=$(echo "$node" | jq -r '.extra')
 
+        # 调试信息
+        echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
+
         # Reality节点Clash不支持，跳过
         if [[ "$protocol" == "vless" && "$security" == "reality" ]]; then
+            echo "# INFO: Skipping Reality node on port $port (Clash不支持)" >&2
+            ((skipped_count++))
             continue
         fi
 
@@ -510,10 +519,18 @@ EOF
         [[ -n "$node_config" ]] && proxy_configs+=("$node_config")
     done < <(echo "$nodes_array" | jq -c '.[]')
 
+    # 调试统计信息
+    echo "# DEBUG: Total processed: $processed_count, Skipped: $skipped_count, Generated: ${#proxy_configs[@]}" >&2
+
     # 验证是否有有效节点
     if [[ ${#proxy_configs[@]} -eq 0 ]]; then
         echo "# ERROR: No valid nodes generated for Clash configuration" >&2
-        echo "# Please check node configuration and user password settings" >&2
+        echo "# Processed $processed_count nodes, skipped $skipped_count" >&2
+        echo "# Possible reasons:" >&2
+        echo "#   1. All nodes are Reality protocol (not supported by Clash)" >&2
+        echo "#   2. Trojan/SS nodes missing password field" >&2
+        echo "#   3. Node data structure mismatch" >&2
+        echo "# Please check: /usr/local/xray/data/nodes.json" >&2
         return 1
     fi
 
@@ -880,6 +897,15 @@ generate_subscription_with_user() {
     read -p "请输入订阅名称 [默认: ${sub_user_email}-sub]: " sub_name
     sub_name=${sub_name:-${sub_user_email}-sub}
 
+    # 清理订阅名称中的特殊字符和中文，避免乱码
+    # 只保留字母、数字、连字符和下划线
+    sub_name=$(echo "$sub_name" | tr -cd 'a-zA-Z0-9_-')
+
+    # 如果清理后为空，使用时间戳
+    if [[ -z "$sub_name" ]]; then
+        sub_name="subscription-$(date +%s)"
+    fi
+
     # 选择订阅类型
     echo ""
     echo -e "${CYAN}选择订阅类型：${NC}"
@@ -985,8 +1011,26 @@ generate_subscription_with_user() {
                 fi
             done
 
-            # 生成Clash配置
-            sub_content=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password")
+            # 生成Clash配置（捕获错误输出）
+            local clash_output=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>&1)
+            local clash_exit_code=$?
+
+            if [[ $clash_exit_code -ne 0 ]]; then
+                echo ""
+                print_error "Clash配置生成失败"
+                echo ""
+                echo -e "${YELLOW}详细信息：${NC}"
+                echo "$clash_output" | grep -E "^#" | sed 's/^# /  /'
+                echo ""
+                echo -e "${CYAN}提示：${NC}"
+                echo "  1. 检查是否所有节点都是 Reality 协议（Clash 不支持）"
+                echo "  2. Trojan/SS 节点需要 password 字段"
+                echo "  3. 可以尝试使用【通用订阅】或【原始订阅】格式"
+                echo ""
+                return 1
+            fi
+
+            sub_content="$clash_output"
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}_clash.yaml"
             ;;
     esac
