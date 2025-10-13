@@ -290,20 +290,18 @@ menu_node() {
         echo -e "${GREEN}1.${NC} 快速搭建（VLESS + Reality 推荐）"
         echo -e "${GREEN}2.${NC} 添加节点"
         echo -e "${GREEN}3.${NC} 查看节点"
-        echo -e "${GREEN}4.${NC} 修改节点基本配置"
-        echo -e "${GREEN}5.${NC} 修改节点绑定用户"
-        echo -e "${GREEN}6.${NC} 删除节点"
+        echo -e "${GREEN}4.${NC} 修改节点"
+        echo -e "${GREEN}5.${NC} 删除节点"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-6]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
             1) quick_add_vless_reality ;;
             2) menu_node_add ;;
             3) view_node_detail ;;
-            4) modify_node_config_only ;;
-            5) modify_node_users ;;
-            6) delete_node_menu ;;
+            4) modify_node_menu ;;
+            5) delete_node_smart ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -372,10 +370,11 @@ view_node_detail() {
 }
 
 # 修改节点基本配置（扁平化，只修改配置不涉及用户）
-modify_node_config_only() {
+# 修改节点菜单（二级菜单）
+modify_node_menu() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      修改节点基本配置                ║${NC}"
+    echo -e "${CYAN}║      修改节点                        ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
 
@@ -393,6 +392,126 @@ modify_node_config_only() {
         print_error "无效的节点序号"
         return 1
     fi
+
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║      修改节点: ${YELLOW}端口 $port${CYAN}            ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 修改基本配置"
+        echo -e "${GREEN}2.${NC} 添加绑定用户"
+        echo -e "${GREEN}3.${NC} 移除绑定用户"
+        echo -e "${GREEN}0.${NC} 返回"
+        echo ""
+        read -p "请选择操作 [0-3]: " choice
+
+        case $choice in
+            1)
+                modify_node_config_direct "$port"
+                ;;
+            2)
+                bind_users_to_node_smart "$port"
+                ;;
+            3)
+                unbind_users_from_node_smart "$port"
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                print_error "无效选择"
+                ;;
+        esac
+
+        read -p "按 Enter 键继续..."
+    done
+}
+
+# 智能删除节点（自动识别单个/批量）
+delete_node_smart() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      删除节点                        ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    list_nodes
+
+    echo ""
+    echo -e "${YELLOW}请输入节点序号（单个或多个用空格分隔）${NC}"
+    read -p "节点序号: " node_indices
+
+    if [[ -z "$node_indices" ]]; then
+        print_error "节点序号不能为空"
+        return 1
+    fi
+
+    # 收集要删除的端口
+    local ports_to_delete=()
+    for idx in $node_indices; do
+        local port=$(get_node_port_by_index "$idx")
+        if [[ -n "$port" && "$port" != "null" ]]; then
+            ports_to_delete+=("$port")
+        else
+            print_error "无效的节点序号: $idx"
+        fi
+    done
+
+    if [[ ${#ports_to_delete[@]} -eq 0 ]]; then
+        print_error "没有有效的节点可删除"
+        return 1
+    fi
+
+    # 确认删除
+    echo ""
+    echo -e "${YELLOW}即将删除以下节点：${NC}"
+    for port in "${ports_to_delete[@]}"; do
+        local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE" 2>/dev/null)
+        echo "  - 端口 $port ($protocol)"
+    done
+    echo ""
+    read -p "确认删除？(y/N): " confirm
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        print_info "已取消删除"
+        return 0
+    fi
+
+    local success_count=0
+    local fail_count=0
+
+    for port in "${ports_to_delete[@]}"; do
+        # 删除节点
+        jq ".nodes |= map(select(.port != \"$port\"))" "$NODES_FILE" > "${NODES_FILE}.tmp"
+        mv "${NODES_FILE}.tmp" "$NODES_FILE"
+
+        # 删除绑定关系
+        if [[ -f "$NODE_USERS_FILE" ]]; then
+            jq ".bindings |= map(select(.port != \"$port\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        fi
+
+        # 从配置中移除
+        remove_inbound_from_config "$port"
+
+        print_success "已删除节点: 端口 $port"
+        ((success_count++))
+    done
+
+    echo ""
+    print_info "操作完成：成功 $success_count 个，失败 $fail_count 个"
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "配置已更新并重启服务"
+    fi
+}
+
+# 直接修改节点基本配置
+modify_node_config_direct() {
+    local port=$1
 
     # 显示当前节点详情
     show_node_detail "$port"
@@ -442,99 +561,6 @@ modify_node_config_only() {
     esac
 }
 
-# 修改节点绑定用户（扁平化，支持添加和移除）
-modify_node_users() {
-    clear
-    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      修改节点绑定用户                ║${NC}"
-    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
-    echo ""
-
-    list_nodes
-
-    echo ""
-    read -p "请输入节点序号: " node_idx
-    if [[ -z "$node_idx" ]]; then
-        print_error "输入不能为空"
-        return 1
-    fi
-
-    local port=$(get_node_port_by_index "$node_idx")
-    if [[ -z "$port" || "$port" == "null" ]]; then
-        print_error "无效的节点序号"
-        return 1
-    fi
-
-    echo ""
-    echo -e "${CYAN}当前节点端口: ${YELLOW}$port${NC}"
-    echo ""
-    echo -e "${GREEN}1.${NC} 添加绑定用户（单个）"
-    echo -e "${GREEN}2.${NC} 添加绑定用户（多个）"
-    echo -e "${GREEN}3.${NC} 移除绑定用户（单个）"
-    echo -e "${GREEN}4.${NC} 移除绑定用户（多个）"
-    echo -e "${GREEN}0.${NC} 返回"
-    echo ""
-    read -p "请选择操作 [0-4]: " choice
-
-    case $choice in
-        1)
-            # 单个添加
-            bind_single_user_to_node "$port"
-            ;;
-        2)
-            # 多个添加
-            batch_bind_users_to_node "$port"
-            ;;
-        3)
-            # 单个移除
-            unbind_single_user_from_node "$port"
-            ;;
-        4)
-            # 多个移除
-            batch_unbind_users_from_node "$port"
-            ;;
-        0)
-            return 0
-            ;;
-        *)
-            print_error "无效选择"
-            ;;
-    esac
-}
-
-# 删除节点菜单（扁平化，支持单个和批量）
-delete_node_menu() {
-    clear
-    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      删除节点                        ║${NC}"
-    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
-    echo ""
-
-    list_nodes
-
-    echo ""
-    echo -e "${GREEN}1.${NC} 删除单个节点"
-    echo -e "${GREEN}2.${NC} 批量删除节点"
-    echo -e "${GREEN}0.${NC} 返回"
-    echo ""
-    read -p "请选择操作 [0-2]: " choice
-
-    case $choice in
-        1)
-            delete_single_node
-            ;;
-        2)
-            batch_delete_nodes
-            ;;
-        0)
-            return 0
-            ;;
-        *)
-            print_error "无效选择"
-            ;;
-    esac
-}
-
 # 用户管理菜单（扁平化结构）
 menu_user() {
     # 引入统一选择器
@@ -550,19 +576,17 @@ menu_user() {
         echo ""
         echo -e "${GREEN}1.${NC} 查看用户"
         echo -e "${GREEN}2.${NC} 添加用户"
-        echo -e "${GREEN}3.${NC} 修改用户基础信息"
-        echo -e "${GREEN}4.${NC} 修改用户绑定节点"
-        echo -e "${GREEN}5.${NC} 删除用户"
+        echo -e "${GREEN}3.${NC} 修改用户"
+        echo -e "${GREEN}4.${NC} 删除用户"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-5]: " choice
+        read -p "请选择操作 [0-4]: " choice
 
         case $choice in
             1) view_user_detail ;;
             2) add_global_user ;;
-            3) modify_user_info ;;
-            4) modify_user_bindings ;;
-            5) delete_user_menu ;;
+            3) modify_user_menu ;;
+            4) delete_user_smart ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -594,11 +618,11 @@ view_user_detail() {
     show_user_detail "$username"
 }
 
-# 修改用户基础信息（扁平化）
-modify_user_info() {
+# 修改用户菜单（二级菜单）
+modify_user_menu() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      修改用户基础信息                ║${NC}"
+    echo -e "${CYAN}║      修改用户                        ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
 
@@ -611,27 +635,6 @@ modify_user_info() {
         return 1
     fi
 
-    # 调用原有的modify_user函数
-    modify_user
-}
-
-# 修改用户绑定节点（扁平化，支持添加和移除）
-modify_user_bindings() {
-    clear
-    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      修改用户绑定节点                ║${NC}"
-    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
-    echo ""
-
-    list_global_users
-
-    echo ""
-    read -p "请输入用户名: " username
-    if [[ -z "$username" ]]; then
-        print_error "用户名不能为空"
-        return 1
-    fi
-
     # 检查用户是否存在
     local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
     if [[ -z "$uuid" ]]; then
@@ -639,45 +642,43 @@ modify_user_bindings() {
         return 1
     fi
 
-    echo ""
-    echo -e "${CYAN}当前用户: ${YELLOW}$username${NC}"
-    echo ""
-    echo -e "${GREEN}1.${NC} 添加绑定节点（单个）"
-    echo -e "${GREEN}2.${NC} 添加绑定节点（多个）"
-    echo -e "${GREEN}3.${NC} 移除绑定节点（单个）"
-    echo -e "${GREEN}4.${NC} 移除绑定节点（多个）"
-    echo -e "${GREEN}0.${NC} 返回"
-    echo ""
-    read -p "请选择操作 [0-4]: " choice
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║      修改用户: ${YELLOW}$username${CYAN}              ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${GREEN}1.${NC} 修改基础信息"
+        echo -e "${GREEN}2.${NC} 添加绑定节点"
+        echo -e "${GREEN}3.${NC} 移除绑定节点"
+        echo -e "${GREEN}0.${NC} 返回"
+        echo ""
+        read -p "请选择操作 [0-3]: " choice
 
-    case $choice in
-        1)
-            # 单个添加
-            bind_single_node_to_user "$username"
-            ;;
-        2)
-            # 多个添加
-            batch_bind_nodes_to_user "$username"
-            ;;
-        3)
-            # 单个移除
-            unbind_single_node_from_user "$username"
-            ;;
-        4)
-            # 多个移除
-            batch_unbind_nodes_from_user "$username"
-            ;;
-        0)
-            return 0
-            ;;
-        *)
-            print_error "无效选择"
-            ;;
-    esac
+        case $choice in
+            1)
+                modify_user_info_direct "$username"
+                ;;
+            2)
+                bind_nodes_to_user_smart "$username"
+                ;;
+            3)
+                unbind_nodes_from_user_smart "$username"
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                print_error "无效选择"
+                ;;
+        esac
+
+        read -p "按 Enter 键继续..."
+    done
 }
 
-# 删除用户菜单（扁平化，支持单个和多个）
-delete_user_menu() {
+# 智能删除用户（自动识别单个/批量）
+delete_user_smart() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║      删除用户                        ║${NC}"
@@ -687,26 +688,71 @@ delete_user_menu() {
     list_global_users
 
     echo ""
-    echo -e "${GREEN}1.${NC} 删除单个用户"
-    echo -e "${GREEN}2.${NC} 批量删除用户"
-    echo -e "${GREEN}0.${NC} 返回"
-    echo ""
-    read -p "请选择操作 [0-2]: " choice
+    echo -e "${YELLOW}请输入用户名（单个或多个用空格分隔）${NC}"
+    read -p "用户名: " usernames
 
-    case $choice in
-        1)
-            delete_single_user
-            ;;
-        2)
-            batch_delete_users
-            ;;
-        0)
-            return 0
-            ;;
-        *)
-            print_error "无效选择"
-            ;;
-    esac
+    if [[ -z "$usernames" ]]; then
+        print_error "用户名不能为空"
+        return 1
+    fi
+
+    # 确认删除
+    echo ""
+    echo -e "${YELLOW}即将删除以下用户：${NC}"
+    for username in $usernames; do
+        echo "  - $username"
+    done
+    echo ""
+    read -p "确认删除？(y/N): " confirm
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        print_info "已取消删除"
+        return 0
+    fi
+
+    local success_count=0
+    local fail_count=0
+
+    for username in $usernames; do
+        # 获取用户UUID
+        local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+
+        if [[ -z "$uuid" ]]; then
+            print_error "用户不存在: $username"
+            ((fail_count++))
+            continue
+        fi
+
+        # 从绑定关系中移除该用户
+        if [[ -f "$NODE_USERS_FILE" ]]; then
+            jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        fi
+
+        # 从用户文件中删除
+        jq ".users |= map(select(.username != \"$username\"))" "$USERS_FILE" > "${USERS_FILE}.tmp"
+        mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+        print_success "已删除用户: $username"
+        ((success_count++))
+    done
+
+    echo ""
+    print_info "操作完成：成功 $success_count 个，失败 $fail_count 个"
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "配置已更新并重启服务"
+    fi
+}
+
+# 直接修改用户基础信息
+modify_user_info_direct() {
+    local username=$1
+
+    # 调用原有的modify_user函数
+    modify_user "$username"
 }
 
 # 订阅管理菜单
