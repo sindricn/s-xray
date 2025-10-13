@@ -837,19 +837,6 @@ batch_unbind_users_from_node() {
 bind_nodes_to_user_smart() {
     local username=$1
 
-    echo ""
-    echo -e "${YELLOW}可用节点列表：${NC}"
-    list_nodes
-
-    echo ""
-    echo -e "${YELLOW}请输入节点端口（单个或多个用空格分隔）${NC}"
-    read -p "端口: " ports
-
-    if [[ -z "$ports" ]]; then
-        print_error "端口不能为空"
-        return 1
-    fi
-
     # 获取用户UUID
     local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
 
@@ -857,15 +844,101 @@ bind_nodes_to_user_smart() {
         echo '{"bindings":[]}' > "$NODE_USERS_FILE"
     fi
 
+    # 获取所有节点和绑定状态
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}已绑定节点：${NC}"
+    local has_bound=false
+    local bound_ports=()
+
+    while IFS= read -r binding; do
+        local port=$(echo "$binding" | jq -r '.port')
+        local users=$(echo "$binding" | jq -r '.users[]')
+
+        if echo "$users" | grep -q "$uuid"; then
+            local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+            if [[ -n "$node" && "$node" != "null" ]]; then
+                local protocol=$(echo "$node" | jq -r '.protocol')
+                local transport=$(echo "$node" | jq -r '.transport')
+                echo -e "  ${YELLOW}✓${NC} 端口 ${GREEN}$port${NC} ($protocol/$transport)"
+                has_bound=true
+                bound_ports+=("$port")
+            fi
+        fi
+    done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ "$has_bound" == "false" ]]; then
+        echo -e "  ${YELLOW}无${NC}"
+    fi
+
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}未绑定节点：${NC}"
+    local has_unbound=false
+    local node_count=0
+
+    while IFS= read -r node; do
+        ((node_count++))
+        local port=$(echo "$node" | jq -r '.port')
+        local protocol=$(echo "$node" | jq -r '.protocol')
+        local transport=$(echo "$node" | jq -r '.transport')
+
+        # 检查是否已绑定
+        local is_bound=false
+        for bound_port in "${bound_ports[@]}"; do
+            if [[ "$bound_port" == "$port" ]]; then
+                is_bound=true
+                break
+            fi
+        done
+
+        if [[ "$is_bound" == "false" ]]; then
+            echo -e "  ${CYAN}[$node_count]${NC} 端口 ${YELLOW}$port${NC} ($protocol/$transport)"
+            has_unbound=true
+        fi
+    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+
+    if [[ "$has_unbound" == "false" ]]; then
+        echo -e "  ${YELLOW}无${NC}"
+        echo ""
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        print_info "所有节点都已绑定"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}请输入节点序号或端口（单个或多个用空格分隔）${NC}"
+    read -p "输入: " inputs
+
+    if [[ -z "$inputs" ]]; then
+        print_error "输入不能为空"
+        return 1
+    fi
+
     local success_count=0
     local fail_count=0
     local skip_count=0
 
-    for port in $ports; do
+    for input in $inputs; do
+        local port=""
+
+        # 判断是序号还是端口
+        if [[ "$input" =~ ^[0-9]+$ ]]; then
+            # 是数字，判断是序号还是端口
+            port=$(jq -r ".nodes[$((input-1))].port" "$NODES_FILE" 2>/dev/null)
+            if [[ -z "$port" || "$port" == "null" ]]; then
+                # 不是有效序号，当作端口处理
+                port="$input"
+            fi
+        else
+            port="$input"
+        fi
+
         # 检查节点是否存在
         local node_exists=$(jq -r ".nodes[] | select(.port == \"$port\") | .port" "$NODES_FILE" 2>/dev/null)
         if [[ -z "$node_exists" ]]; then
-            print_error "节点不存在: 端口 $port"
+            print_error "节点不存在: $input"
             ((fail_count++))
             continue
         fi
@@ -962,16 +1035,78 @@ unbind_nodes_from_user_smart() {
 bind_users_to_node_smart() {
     local port=$1
 
+    # 获取已绑定到此节点的用户UUID列表
+    local bound_uuids=()
+    while IFS= read -r uuid; do
+        [[ -n "$uuid" && "$uuid" != "null" ]] && bound_uuids+=("$uuid")
+    done < <(jq -r ".bindings[] | select(.port == \"$port\") | .users[]?" "$NODE_USERS_FILE" 2>/dev/null)
+
+    # Display bound users section
     echo ""
-    echo -e "${YELLOW}可用用户列表：${NC}"
-    list_global_users
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}已绑定用户：${NC}"
+    local has_bound=false
+
+    if [[ ${#bound_uuids[@]} -gt 0 ]]; then
+        for uuid in "${bound_uuids[@]}"; do
+            local user=$(jq -r ".users[] | select(.id == \"$uuid\")" "$USERS_FILE" 2>/dev/null)
+            if [[ -n "$user" && "$user" != "null" ]]; then
+                local username=$(echo "$user" | jq -r '.username')
+                local email=$(echo "$user" | jq -r '.email // "无邮箱"')
+                echo -e "  ${YELLOW}✓${NC} ${GREEN}$username${NC} ($email)"
+                has_bound=true
+            fi
+        done
+    fi
+
+    [[ "$has_bound" == "false" ]] && echo -e "  ${YELLOW}暂无${NC}"
+
+    # Display unbound users section
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}未绑定用户：${NC}"
+    local user_count=0
+    local has_unbound=false
+
+    # Create associative array for fast lookup (simulate with grep check)
+    declare -A bound_map
+    for uuid in "${bound_uuids[@]}"; do
+        bound_map["$uuid"]=1
+    done
+
+    while IFS= read -r user; do
+        ((user_count++))
+        local username=$(echo "$user" | jq -r '.username')
+        local uuid=$(echo "$user" | jq -r '.id')
+        local email=$(echo "$user" | jq -r '.email // "无邮箱"')
+
+        # Check if already bound
+        local is_bound=false
+        for bound_uuid in "${bound_uuids[@]}"; do
+            if [[ "$bound_uuid" == "$uuid" ]]; then
+                is_bound=true
+                break
+            fi
+        done
+
+        if [[ "$is_bound" == "false" ]]; then
+            echo -e "  ${CYAN}[$user_count]${NC} ${YELLOW}$username${NC} ($email)"
+            has_unbound=true
+        fi
+    done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
+
+    [[ "$has_unbound" == "false" ]] && echo -e "  ${YELLOW}暂无${NC}"
 
     echo ""
-    echo -e "${YELLOW}请输入用户名（单个或多个用空格分隔）${NC}"
-    read -p "用户名: " usernames
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-    if [[ -z "$usernames" ]]; then
-        print_error "用户名不能为空"
+    # Smart input handling - accept both index and username
+    echo ""
+    echo -e "${YELLOW}请输入用户序号或用户名（单个或多个用空格分隔）${NC}"
+    read -p "输入: " inputs
+
+    if [[ -z "$inputs" ]]; then
+        print_error "输入不能为空"
         return 1
     fi
 
@@ -983,36 +1118,67 @@ bind_users_to_node_smart() {
     local fail_count=0
     local skip_count=0
 
-    for username in $usernames; do
-        # 获取用户UUID
-        local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
-        if [[ -z "$uuid" ]]; then
+    for input in $inputs; do
+        local username=""
+        local uuid=""
+
+        # Detect if input is index or username
+        if [[ "$input" =~ ^[0-9]+$ ]]; then
+            # Input is an index
+            local idx=$((input - 1))
+            username=$(jq -r ".users[$idx].username" "$USERS_FILE" 2>/dev/null)
+
+            if [[ -z "$username" || "$username" == "null" ]]; then
+                # Not a valid index, treat as username
+                username="$input"
+            fi
+        else
+            # Input is username
+            username="$input"
+        fi
+
+        # Get UUID from username
+        uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+
+        if [[ -z "$uuid" || "$uuid" == "null" ]]; then
             print_error "用户不存在: $username"
             ((fail_count++))
             continue
         fi
 
-        # 检查是否已绑定
-        local already_bound=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[] | select(. == \"$uuid\")" "$NODE_USERS_FILE" 2>/dev/null)
-        if [[ -n "$already_bound" ]]; then
+        # Check if already bound
+        local already_bound=false
+        for bound_uuid in "${bound_uuids[@]}"; do
+            if [[ "$bound_uuid" == "$uuid" ]]; then
+                already_bound=true
+                break
+            fi
+        done
+
+        if [[ "$already_bound" == "true" ]]; then
             print_info "用户 $username 已绑定，跳过"
             ((skip_count++))
             continue
         fi
 
-        # 添加绑定
+        # Add binding
         local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
 
-        if [[ -z "$binding_exists" ]]; then
+        if [[ -z "$binding_exists" || "$binding_exists" == "null" ]]; then
+            # Create new binding entry
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
             jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
         else
+            # Append to existing binding
             jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
         fi
 
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_success "已绑定用户 $username"
         ((success_count++))
+
+        # Add to bound list for next iteration
+        bound_uuids+=("$uuid")
     done
 
     echo ""

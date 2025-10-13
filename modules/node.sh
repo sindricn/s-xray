@@ -918,21 +918,34 @@ list_nodes() {
         return 0
     fi
 
-    local nodes=$(jq -r '.nodes[] | "\(.protocol)|\(.port)|\(.id)|\(.email)"' "$NODES_FILE" 2>/dev/null)
-
-    if [[ -z "$nodes" ]]; then
+    local node_count=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null)
+    if [[ -z "$node_count" || "$node_count" == "0" ]]; then
         print_warning "暂无节点"
         return 0
     fi
 
-    printf "%-5s %-15s %-10s %-40s %-20s\n" "序号" "协议" "端口" "ID/密码" "备注"
-    echo "------------------------------------------------------------------------------------------------------------"
+    printf "%-5s %-12s %-8s %-12s %-15s %-20s\n" "序号" "协议" "端口" "传输" "安全" "创建时间"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     local index=1
-    while IFS='|' read -r protocol port id email; do
-        printf "%-5s %-15s %-10s %-40s %-20s\n" "$index" "$protocol" "$port" "$id" "$email"
+    while IFS= read -r node; do
+        local protocol=$(echo "$node" | jq -r '.protocol // "unknown"')
+        local port=$(echo "$node" | jq -r '.port // "N/A"')
+        local transport=$(echo "$node" | jq -r '.transport // "N/A"')
+        local security=$(echo "$node" | jq -r '.security // "N/A"')
+        local created=$(echo "$node" | jq -r '.created // "N/A"')
+
+        # 格式化时间显示
+        if [[ "$created" != "N/A" && "$created" != "null" ]]; then
+            created=$(echo "$created" | cut -d'T' -f1)
+        fi
+
+        printf "%-5s %-12s %-8s %-12s %-15s %-20s\n" "$index" "$protocol" "$port" "$transport" "$security" "$created"
         ((index++))
-    done <<< "$nodes"
+    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+
+    echo ""
+    echo -e "${YELLOW}提示：输入节点序号可查看详细信息${NC}"
 }
 
 # 根据序号获取节点端口

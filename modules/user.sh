@@ -561,7 +561,8 @@ modify_user() {
                 jq ".users |= map(if .username == \"$username\" then .email = \"$new_email\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
                 mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "邮箱修改成功"
-                regenerate_config
+                generate_xray_config
+                restart_xray
             fi
             ;;
         2)
@@ -570,7 +571,8 @@ modify_user() {
                 jq ".users |= map(if .username == \"$username\" then .password = \"$new_password\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
                 mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "密码修改成功"
-                regenerate_config
+                generate_xray_config
+                restart_xray
             fi
             ;;
         3)
@@ -579,7 +581,8 @@ modify_user() {
             jq ".users |= map(if .username == \"$username\" then .id = \"$new_uuid\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
             mv "${USERS_FILE}.tmp" "$USERS_FILE"
             print_success "UUID 重置成功"
-            regenerate_config
+            generate_xray_config
+            restart_xray
             ;;
         4)
             local current_enabled=$(echo "$user_info" | jq -r '.enabled')
@@ -594,7 +597,8 @@ modify_user() {
             else
                 print_success "用户已禁用"
             fi
-            regenerate_config
+            generate_xray_config
+            restart_xray
             ;;
         0)
             return 0

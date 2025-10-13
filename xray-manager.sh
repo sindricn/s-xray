@@ -513,52 +513,272 @@ delete_node_smart() {
 modify_node_config_direct() {
     local port=$1
 
-    # 显示当前节点详情
-    show_node_detail "$port"
+    # 获取节点信息
+    local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+    if [[ -z "$node" || "$node" == "null" ]]; then
+        print_error "节点不存在: $port"
+        return 1
+    fi
 
-    echo ""
-    echo -e "${CYAN}可修改的项目：${NC}"
-    echo -e "${GREEN}1.${NC} 修改端口"
-    echo -e "${GREEN}0.${NC} 返回"
-    echo ""
-    read -p "请选择 [0-1]: " choice
+    local security=$(echo "$node" | jq -r '.security // "none"')
 
-    case $choice in
-        1)
-            echo ""
-            read -p "请输入新端口: " new_port
-            if [[ -n "$new_port" ]]; then
-                # 检查新端口是否已被占用
-                if check_port_exists "$new_port"; then
-                    print_error "端口 $new_port 已被占用"
-                    return 1
+    while true; do
+        # 显示当前节点详情
+        show_node_detail "$port"
+
+        echo ""
+        echo -e "${CYAN}可修改的项目：${NC}"
+        echo -e "${GREEN}1.${NC} 修改端口"
+
+        # Reality节点显示额外选项
+        if [[ "$security" == "reality" ]]; then
+            echo -e "${GREEN}2.${NC} 修改伪装域名 (SNI)"
+            echo -e "${GREEN}3.${NC} 重置公私钥对"
+        fi
+
+        echo -e "${GREEN}0.${NC} 返回"
+        echo ""
+
+        local max_choice=1
+        [[ "$security" == "reality" ]] && max_choice=3
+
+        read -p "请选择 [0-$max_choice]: " choice
+
+        case $choice in
+            1)
+                # 修改端口
+                echo ""
+                read -p "请输入新端口: " new_port
+                if [[ -n "$new_port" ]]; then
+                    # 检查新端口是否已被占用
+                    if check_port_exists "$new_port"; then
+                        print_error "端口 $new_port 已被占用"
+                        continue
+                    fi
+
+                    # 更新节点信息
+                    jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+
+                    # 更新绑定信息
+                    if [[ -f "$NODE_USERS_FILE" ]]; then
+                        jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+                    fi
+
+                    # 更新配置文件
+                    remove_inbound_from_config "$port"
+                    generate_xray_config
+                    restart_xray
+
+                    print_success "端口已修改为 $new_port"
+                    port=$new_port  # 更新当前端口变量
+                fi
+                ;;
+            2)
+                # 修改伪装域名 (仅Reality节点)
+                if [[ "$security" != "reality" ]]; then
+                    print_error "此选项仅适用于 Reality 节点"
+                    continue
                 fi
 
-                # 更新节点信息
-                jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
-                mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                echo ""
+                echo -e "${CYAN}修改 Reality 伪装域名${NC}"
+                echo ""
 
-                # 更新绑定信息
-                if [[ -f "$NODE_USERS_FILE" ]]; then
-                    jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
-                    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+                # 显示当前配置
+                local extra=$(echo "$node" | jq -r '.extra')
+                local current_dest=$(echo "$extra" | jq -r '.dest // "未设置"')
+                local current_sni=$(echo "$extra" | jq -r '.server_names[0] // "未设置"')
+
+                echo -e "${YELLOW}当前配置：${NC}"
+                echo -e "  伪装目标 (dest): $current_dest"
+                echo -e "  伪装域名 (SNI): $current_sni"
+                echo ""
+
+                echo -e "${YELLOW}请选择：${NC}"
+                echo -e "${GREEN}1.${NC} 手动输入域名"
+                echo -e "${GREEN}2.${NC} 自动优选域名"
+                echo -e "${GREEN}0.${NC} 取消"
+                echo ""
+                read -p "请选择 [0-2]: " domain_choice
+
+                case $domain_choice in
+                    1)
+                        # 手动输入
+                        echo ""
+                        read -p "请输入新的伪装域名: " new_domain
+                        if [[ -n "$new_domain" ]]; then
+                            # 测试域名可用性
+                            print_info "测试域名连接性..."
+                            if timeout 3 bash -c "echo '' | openssl s_client -connect $new_domain:443 -servername $new_domain" >/dev/null 2>&1; then
+                                print_success "域名测试通过"
+
+                                # 更新节点extra字段
+                                jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                                mv "${NODES_FILE}.tmp" "$NODES_FILE"
+
+                                # 重新生成配置
+                                generate_xray_config
+                                restart_xray
+
+                                print_success "伪装域名已更新为: $new_domain"
+
+                                # 重新加载节点信息
+                                node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                            else
+                                print_warning "域名测试失败，但仍可继续使用"
+                                read -p "是否仍要使用此域名? [y/N]: " confirm
+                                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                                    jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                                    generate_xray_config
+                                    restart_xray
+                                    print_success "伪装域名已更新为: $new_domain"
+                                    node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                                fi
+                            fi
+                        fi
+                        ;;
+                    2)
+                        # 自动优选（调用domain模块的优选功能）
+                        if [[ -f "${MODULES_DIR}/domain.sh" ]]; then
+                            source "${MODULES_DIR}/domain.sh"
+
+                            print_info "开始自动优选伪装域名..."
+                            echo ""
+
+                            # 使用临时文件存储结果
+                            local temp_file=$(mktemp)
+
+                            # 测试候选域名
+                            local candidates=("www.cloudflare.com" "www.google.com" "www.microsoft.com" "www.apple.com" "www.amazon.com")
+                            local best_domain=""
+                            local best_latency=9999
+
+                            for domain in "${candidates[@]}"; do
+                                print_info "测试: $domain"
+                                local t1=$(date +%s%3N)
+                                if timeout 2 bash -c "echo '' | openssl s_client -connect $domain:443 -servername $domain" >/dev/null 2>&1; then
+                                    local t2=$(date +%s%3N)
+                                    local latency=$((t2 - t1))
+                                    echo -e "  ${GREEN}✓${NC} 延迟: ${latency}ms"
+
+                                    if [[ $latency -lt $best_latency ]]; then
+                                        best_latency=$latency
+                                        best_domain=$domain
+                                    fi
+                                else
+                                    echo -e "  ${RED}✗${NC} 连接失败"
+                                fi
+                            done
+
+                            if [[ -n "$best_domain" ]]; then
+                                echo ""
+                                print_success "优选完成！最佳域名: $best_domain (${best_latency}ms)"
+
+                                # 更新节点
+                                jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$best_domain:443\" | .extra.server_names = [\"$best_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                                mv "${NODES_FILE}.tmp" "$NODES_FILE"
+
+                                generate_xray_config
+                                restart_xray
+
+                                print_success "伪装域名已自动更新为: $best_domain"
+                                node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                            else
+                                print_error "自动优选失败，未找到可用域名"
+                            fi
+
+                            rm -f "$temp_file"
+                        else
+                            print_error "domain 模块未找到"
+                        fi
+                        ;;
+                    0)
+                        # 取消
+                        ;;
+                    *)
+                        print_error "无效选择"
+                        ;;
+                esac
+                ;;
+            3)
+                # 重置公私钥对 (仅Reality节点)
+                if [[ "$security" != "reality" ]]; then
+                    print_error "此选项仅适用于 Reality 节点"
+                    continue
                 fi
 
-                # 更新配置文件
-                remove_inbound_from_config "$port"
-                generate_xray_config
-                restart_xray
+                echo ""
+                echo -e "${CYAN}重置 Reality 公私钥对${NC}"
+                echo ""
+                echo -e "${YELLOW}警告：重置后需要更新所有客户端配置！${NC}"
+                echo ""
+                read -p "确认重置? [y/N]: " confirm
 
-                print_success "端口已修改为 $new_port"
-            fi
-            ;;
-        0)
-            return 0
-            ;;
-        *)
-            print_error "无效选择"
-            ;;
-    esac
+                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                    print_info "生成新的密钥对..."
+
+                    # 生成新密钥对
+                    local keypair=$("$XRAY_BIN" x25519 2>/dev/null)
+
+                    if [[ $? -ne 0 || -z "$keypair" ]]; then
+                        print_error "密钥生成失败"
+                        continue
+                    fi
+
+                    # 解析密钥 (支持多种格式)
+                    local private_key=$(echo "$keypair" | grep -i "Private" | awk '{print $NF}')
+                    local public_key=$(echo "$keypair" | grep -i "Public" | awk '{print $NF}')
+
+                    if [[ -z "$private_key" || -z "$public_key" ]]; then
+                        # 尝试其他格式
+                        private_key=$(echo "$keypair" | sed -n '1p' | awk '{print $NF}')
+                        public_key=$(echo "$keypair" | sed -n '2p' | awk '{print $NF}')
+                    fi
+
+                    if [[ -z "$private_key" || -z "$public_key" ]]; then
+                        print_error "密钥解析失败"
+                        echo "$keypair"
+                        continue
+                    fi
+
+                    print_success "新密钥对生成成功"
+                    echo -e "  私钥: ${YELLOW}${private_key:0:20}...${NC}"
+                    echo -e "  公钥: ${YELLOW}${public_key:0:20}...${NC}"
+                    echo ""
+
+                    # 更新节点extra字段
+                    jq ".nodes |= map(if .port == \"$port\" then .extra.private_key = \"$private_key\" | .extra.public_key = \"$public_key\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+
+                    # 重新生成配置
+                    generate_xray_config
+                    restart_xray
+
+                    print_success "密钥对已重置"
+                    echo ""
+                    echo -e "${YELLOW}重要提示：${NC}"
+                    echo -e "  1. 新公钥: ${GREEN}$public_key${NC}"
+                    echo -e "  2. 请更新所有客户端的公钥配置"
+                    echo -e "  3. 可在节点详情中查看完整配置"
+
+                    # 重新加载节点信息
+                    node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                fi
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                print_error "无效选择"
+                ;;
+        esac
+
+        echo ""
+        read -p "按 Enter 键继续..."
+    done
 }
 
 # 用户管理菜单（扁平化结构）
@@ -648,21 +868,45 @@ modify_user_menu() {
         echo -e "${CYAN}║      修改用户: ${YELLOW}$username${CYAN}              ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "${GREEN}1.${NC} 修改基础信息"
-        echo -e "${GREEN}2.${NC} 添加绑定节点"
-        echo -e "${GREEN}3.${NC} 移除绑定节点"
+        echo -e "${GREEN}1.${NC} 修改用户名"
+        echo -e "${GREEN}2.${NC} 修改基础信息"
+        echo -e "${GREEN}3.${NC} 添加绑定节点"
+        echo -e "${GREEN}4.${NC} 移除绑定节点"
         echo -e "${GREEN}0.${NC} 返回"
         echo ""
-        read -p "请选择操作 [0-3]: " choice
+        read -p "请选择操作 [0-4]: " choice
 
         case $choice in
             1)
-                modify_user_info_direct "$username"
+                # 修改用户名
+                local new_username
+                echo ""
+                read -p "请输入新用户名: " new_username
+                if [[ -n "$new_username" ]]; then
+                    # 检查新用户名是否已存在
+                    local exists=$(jq -r ".users[] | select(.username == \"$new_username\") | .username" "$USERS_FILE" 2>/dev/null)
+                    if [[ -n "$exists" ]]; then
+                        print_error "用户名已存在: $new_username"
+                    else
+                        # 更新用户名
+                        jq ".users |= map(if .username == \"$username\" then .username = \"$new_username\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                        mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+                        generate_xray_config
+                        restart_xray
+
+                        print_success "用户名已修改为: $new_username"
+                        username="$new_username"
+                    fi
+                fi
                 ;;
             2)
-                bind_nodes_to_user_smart "$username"
+                modify_user_info_direct "$username"
                 ;;
             3)
+                bind_nodes_to_user_smart "$username"
+                ;;
+            4)
                 unbind_nodes_from_user_smart "$username"
                 ;;
             0)
