@@ -301,6 +301,220 @@ show_node_users() {
     done <<< "$users"
 }
 
+# 为用户添加单个节点绑定
+bind_single_node_to_user() {
+    local username=$1
+
+    echo ""
+    echo -e "${YELLOW}可用节点列表：${NC}"
+    list_nodes
+
+    echo ""
+    read -p "请输入要绑定的节点端口: " port
+    if [[ -z "$port" ]]; then
+        print_error "端口不能为空"
+        return 1
+    fi
+
+    # 检查节点是否存在
+    local node_exists=$(jq -r ".nodes[] | select(.port == \"$port\") | .port" "$NODES_FILE" 2>/dev/null)
+    if [[ -z "$node_exists" ]]; then
+        print_error "节点不存在: $port"
+        return 1
+    fi
+
+    # 获取用户UUID
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+
+    # 检查是否已绑定
+    local already_bound=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[] | select(. == \"$uuid\")" "$NODE_USERS_FILE" 2>/dev/null)
+    if [[ -n "$already_bound" ]]; then
+        print_warning "用户 $username 已绑定到端口 $port"
+        return 0
+    fi
+
+    # 添加绑定
+    if [[ ! -f "$NODE_USERS_FILE" ]]; then
+        echo '{"bindings":[]}' > "$NODE_USERS_FILE"
+    fi
+
+    local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ -z "$binding_exists" ]]; then
+        local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
+        jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    else
+        jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    fi
+
+    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+
+    generate_xray_config
+    restart_xray
+
+    print_success "用户 $username 已绑定到端口 $port"
+}
+
+# 为用户批量添加节点绑定
+batch_bind_nodes_to_user() {
+    local username=$1
+
+    echo ""
+    echo -e "${YELLOW}可用节点列表：${NC}"
+    list_nodes
+
+    echo ""
+    echo -e "${YELLOW}输入节点端口（多个端口用空格分隔）${NC}"
+    read -p "端口列表: " ports
+
+    if [[ -z "$ports" ]]; then
+        print_error "端口列表不能为空"
+        return 1
+    fi
+
+    # 获取用户UUID
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+
+    local success_count=0
+    local fail_count=0
+
+    for port in $ports; do
+        # 检查节点是否存在
+        local node_exists=$(jq -r ".nodes[] | select(.port == \"$port\") | .port" "$NODES_FILE" 2>/dev/null)
+        if [[ -z "$node_exists" ]]; then
+            print_error "节点不存在: $port"
+            ((fail_count++))
+            continue
+        fi
+
+        # 检查是否已绑定
+        local already_bound=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[] | select(. == \"$uuid\")" "$NODE_USERS_FILE" 2>/dev/null)
+        if [[ -n "$already_bound" ]]; then
+            print_info "端口 $port 已绑定，跳过"
+            continue
+        fi
+
+        # 添加绑定
+        local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+
+        if [[ -z "$binding_exists" ]]; then
+            local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
+            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        else
+            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        fi
+
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        print_success "已绑定到端口 $port"
+        ((success_count++))
+    done
+
+    echo ""
+    print_info "批量绑定完成：成功 $success_count 个，失败 $fail_count 个"
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "配置已更新并重启服务"
+    fi
+}
+
+# 为用户移除单个节点绑定
+unbind_single_node_from_user() {
+    local username=$1
+
+    # 获取用户UUID
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+
+    echo ""
+    echo -e "${YELLOW}用户 $username 已绑定的节点：${NC}"
+
+    local has_bindings=false
+    while IFS= read -r binding; do
+        local port=$(echo "$binding" | jq -r '.port')
+        local users=$(echo "$binding" | jq -r '.users[]')
+
+        if echo "$users" | grep -q "$uuid"; then
+            echo "  - 端口 $port"
+            has_bindings=true
+        fi
+    done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ "$has_bindings" == "false" ]]; then
+        print_warning "用户未绑定任何节点"
+        return 0
+    fi
+
+    echo ""
+    read -p "请输入要移除的节点端口: " port
+    if [[ -z "$port" ]]; then
+        print_error "端口不能为空"
+        return 1
+    fi
+
+    # 移除绑定
+    jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+
+    generate_xray_config
+    restart_xray
+
+    print_success "用户 $username 已从端口 $port 解绑"
+}
+
+# 为用户批量移除节点绑定
+batch_unbind_nodes_from_user() {
+    local username=$1
+
+    # 获取用户UUID
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+
+    echo ""
+    echo -e "${YELLOW}用户 $username 已绑定的节点：${NC}"
+
+    local bound_ports=()
+    while IFS= read -r binding; do
+        local port=$(echo "$binding" | jq -r '.port')
+        local users=$(echo "$binding" | jq -r '.users[]')
+
+        if echo "$users" | grep -q "$uuid"; then
+            echo "  - 端口 $port"
+            bound_ports+=("$port")
+        fi
+    done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ ${#bound_ports[@]} -eq 0 ]]; then
+        print_warning "用户未绑定任何节点"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${YELLOW}输入要移除的端口（多个端口用空格分隔）${NC}"
+    read -p "端口列表: " ports
+
+    if [[ -z "$ports" ]]; then
+        print_error "端口列表不能为空"
+        return 1
+    fi
+
+    local success_count=0
+    for port in $ports; do
+        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        print_success "已从端口 $port 解绑"
+        ((success_count++))
+    done
+
+    echo ""
+    print_info "批量解绑完成：成功 $success_count 个"
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "配置已更新并重启服务"
+    fi
+}
+
 # 批量绑定用户到多个节点
 batch_bind_user_to_nodes() {
     clear
@@ -388,6 +602,229 @@ batch_bind_user_to_nodes() {
         # 重启服务
         restart_xray
 
+        print_success "配置已更新并重启服务"
+    fi
+}
+
+# 为节点添加单个用户绑定
+bind_single_user_to_node() {
+    local port=$1
+
+    echo ""
+    echo -e "${YELLOW}可用用户列表：${NC}"
+    list_global_users
+
+    echo ""
+    read -p "请输入要绑定的用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
+        return 1
+    fi
+
+    # 获取用户UUID
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$uuid" ]]; then
+        print_error "用户不存在: $username"
+        return 1
+    fi
+
+    # 检查是否已绑定
+    local already_bound=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[] | select(. == \"$uuid\")" "$NODE_USERS_FILE" 2>/dev/null)
+    if [[ -n "$already_bound" ]]; then
+        print_warning "用户 $username 已绑定到端口 $port"
+        return 0
+    fi
+
+    # 添加绑定
+    if [[ ! -f "$NODE_USERS_FILE" ]]; then
+        echo '{"bindings":[]}' > "$NODE_USERS_FILE"
+    fi
+
+    local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ -z "$binding_exists" ]]; then
+        local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
+        jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    else
+        jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    fi
+
+    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+
+    generate_xray_config
+    restart_xray
+
+    print_success "用户 $username 已绑定到端口 $port"
+}
+
+# 为节点批量添加用户绑定
+batch_bind_users_to_node() {
+    local port=$1
+
+    echo ""
+    echo -e "${YELLOW}可用用户列表：${NC}"
+    list_global_users
+
+    echo ""
+    echo -e "${YELLOW}输入用户名（多个用户名用空格分隔）${NC}"
+    read -p "用户名列表: " usernames
+
+    if [[ -z "$usernames" ]]; then
+        print_error "用户名列表不能为空"
+        return 1
+    fi
+
+    local success_count=0
+    local fail_count=0
+
+    for username in $usernames; do
+        # 获取用户UUID
+        local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+        if [[ -z "$uuid" ]]; then
+            print_error "用户不存在: $username"
+            ((fail_count++))
+            continue
+        fi
+
+        # 检查是否已绑定
+        local already_bound=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[] | select(. == \"$uuid\")" "$NODE_USERS_FILE" 2>/dev/null)
+        if [[ -n "$already_bound" ]]; then
+            print_info "用户 $username 已绑定，跳过"
+            continue
+        fi
+
+        # 添加绑定
+        local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+
+        if [[ -z "$binding_exists" ]]; then
+            local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
+            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        else
+            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        fi
+
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        print_success "已绑定用户 $username"
+        ((success_count++))
+    done
+
+    echo ""
+    print_info "批量绑定完成：成功 $success_count 个，失败 $fail_count 个"
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "配置已更新并重启服务"
+    fi
+}
+
+# 为节点移除单个用户绑定
+unbind_single_user_from_node() {
+    local port=$1
+
+    echo ""
+    echo -e "${YELLOW}节点端口 $port 已绑定的用户：${NC}"
+
+    # 获取该节点的用户列表
+    local users=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[]" "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ -z "$users" ]]; then
+        print_warning "该节点没有绑定用户"
+        return 0
+    fi
+
+    # 显示用户列表
+    while IFS= read -r uuid; do
+        local username=$(jq -r ".users[] | select(.id == \"$uuid\") | .username" "$USERS_FILE" 2>/dev/null)
+        if [[ -n "$username" ]]; then
+            echo "  - $username"
+        fi
+    done <<< "$users"
+
+    echo ""
+    read -p "请输入要移除的用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
+        return 1
+    fi
+
+    # 获取用户UUID
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$uuid" ]]; then
+        print_error "用户不存在: $username"
+        return 1
+    fi
+
+    # 移除绑定
+    jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+
+    generate_xray_config
+    restart_xray
+
+    print_success "用户 $username 已从端口 $port 解绑"
+}
+
+# 为节点批量移除用户绑定
+batch_unbind_users_from_node() {
+    local port=$1
+
+    echo ""
+    echo -e "${YELLOW}节点端口 $port 已绑定的用户：${NC}"
+
+    # 获取该节点的用户列表
+    local users=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[]" "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ -z "$users" ]]; then
+        print_warning "该节点没有绑定用户"
+        return 0
+    fi
+
+    # 显示用户列表
+    local bound_users=()
+    while IFS= read -r uuid; do
+        local username=$(jq -r ".users[] | select(.id == \"$uuid\") | .username" "$USERS_FILE" 2>/dev/null)
+        if [[ -n "$username" ]]; then
+            echo "  - $username"
+            bound_users+=("$username")
+        fi
+    done <<< "$users"
+
+    if [[ ${#bound_users[@]} -eq 0 ]]; then
+        print_warning "该节点没有绑定用户"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${YELLOW}输入要移除的用户名（多个用户名用空格分隔）${NC}"
+    read -p "用户名列表: " usernames
+
+    if [[ -z "$usernames" ]]; then
+        print_error "用户名列表不能为空"
+        return 1
+    fi
+
+    local success_count=0
+    for username in $usernames; do
+        # 获取用户UUID
+        local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+        if [[ -z "$uuid" ]]; then
+            print_error "用户不存在: $username"
+            continue
+        fi
+
+        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        print_success "已移除用户 $username"
+        ((success_count++))
+    done
+
+    echo ""
+    print_info "批量解绑完成：成功 $success_count 个"
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
         print_success "配置已更新并重启服务"
     fi
 }
