@@ -207,6 +207,134 @@ add_global_user() {
     fi
 }
 
+# 显示用户详情（包含绑定节点）
+show_user_detail() {
+    local username=$1
+
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      用户详情                        ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 获取用户信息
+    local user=$(jq -r ".users[] | select(.username == \"$username\")" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$user" || "$user" == "null" ]]; then
+        print_error "用户不存在: $username"
+        return 1
+    fi
+
+    local uuid=$(echo "$user" | jq -r '.id')
+    local password=$(echo "$user" | jq -r '.password // "无"')
+    local email=$(echo "$user" | jq -r '.email // "未设置"')
+    local level=$(echo "$user" | jq -r '.level // 0')
+    local enabled=$(echo "$user" | jq -r '.enabled // true')
+    local created=$(echo "$user" | jq -r '.created // "未知"')
+
+    local status_text=""
+    if [[ "$enabled" == "true" ]]; then
+        status_text="${GREEN}启用${NC}"
+    else
+        status_text="${RED}禁用${NC}"
+    fi
+
+    echo -e "${GREEN}基本信息：${NC}"
+    echo -e "  用户名: ${YELLOW}$username${NC}"
+    echo -e "  密码: ${YELLOW}$password${NC}"
+    echo -e "  邮箱: ${YELLOW}$email${NC}"
+    echo -e "  UUID: ${YELLOW}$uuid${NC}"
+    echo -e "  等级: ${YELLOW}$level${NC}"
+    echo -e "  状态: $status_text"
+    echo -e "  创建时间: ${YELLOW}${created:0:19}${NC}"
+    echo ""
+
+    # 显示绑定的节点
+    echo -e "${GREEN}绑定节点：${NC}"
+    local node_found=false
+
+    if [[ ! -f "$NODE_USERS_FILE" ]]; then
+        echo -e "  ${YELLOW}未绑定任何节点${NC}"
+    else
+        while IFS= read -r binding; do
+            local port=$(echo "$binding" | jq -r '.port')
+            local protocol=$(echo "$binding" | jq -r '.protocol')
+            local users=$(echo "$binding" | jq -r '.users[]')
+
+            # 检查用户是否在这个节点的用户列表中
+            if echo "$users" | grep -q "$uuid"; then
+                node_found=true
+                # 获取节点详细信息
+                local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE")
+                local transport=$(echo "$node" | jq -r '.transport // "未知"')
+                local security=$(echo "$node" | jq -r '.security // "未知"')
+
+                echo -e "  ${CYAN}•${NC} 端口 $port ($protocol)"
+                echo -e "    传输: $transport | 安全: $security"
+            fi
+        done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
+
+        if [[ "$node_found" == "false" ]]; then
+            echo -e "  ${YELLOW}未绑定任何节点${NC}"
+        fi
+    fi
+    echo ""
+}
+
+# 删除单个用户（新增函数）
+delete_single_user() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      删除用户                        ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    list_global_users
+
+    echo ""
+    read -p "请输入要删除的用户名: " username
+    if [[ -z "$username" ]]; then
+        print_error "用户名不能为空"
+        return 1
+    fi
+
+    # 检查用户是否存在
+    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$uuid" || "$uuid" == "null" ]]; then
+        print_error "用户不存在: $username"
+        return 1
+    fi
+
+    # 警告
+    echo ""
+    print_warning "删除用户将同时清理所有节点绑定关系"
+    read -p "确认删除用户 $username? [y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        print_info "取消删除"
+        return 0
+    fi
+
+    # 从所有节点解绑
+    if [[ -f "$NODE_USERS_FILE" ]]; then
+        jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        print_info "已清理节点绑定关系"
+    fi
+
+    # 从全局用户列表删除
+    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+    print_success "用户删除成功"
+
+    # 重新生成配置
+    generate_xray_config
+
+    # 重启服务
+    restart_xray
+
+    print_success "配置已更新并重启服务"
+}
+
 # 删除全局用户（新架构）
 delete_global_user() {
     clear
@@ -757,73 +885,3 @@ batch_delete_users() {
     print_success "批量删除完成！已删除 $success_count 个用户"
 }
 
-# 批量重置流量
-batch_reset_traffic() {
-    clear
-    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║          批量重置流量                ║${NC}"
-    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
-    echo ""
-
-    # 引入选择器
-    if [[ -f "${MODULES_DIR}/selector.sh" ]]; then
-        source "${MODULES_DIR}/selector.sh"
-    fi
-
-    # 获取用户列表
-    local total_users=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
-    if [[ "$total_users" -eq 0 ]]; then
-        print_error "没有用户"
-        return 1
-    fi
-
-    # 构建用户项数组
-    local user_items=()
-    for i in $(seq 0 $((total_users - 1))); do
-        local email=$(jq -r ".users[$i].email" "$USERS_FILE" 2>/dev/null)
-        local username=$(jq -r ".users[$i].username" "$USERS_FILE" 2>/dev/null)
-        user_items+=("$username ($email)")
-    done
-
-    # 使用统一选择器进行多选
-    local selected_indices=($(select_multiple "请选择要重置流量的用户" "${user_items[@]}"))
-    if [[ $? -ne 0 ]] || [[ ${#selected_indices[@]} -eq 0 ]]; then
-        print_error "未选择用户或选择无效"
-        return 1
-    fi
-
-    # 收集用户邮箱
-    local emails_to_reset=()
-    for idx in "${selected_indices[@]}"; do
-        local email=$(jq -r ".users[$idx].email" "$USERS_FILE" 2>/dev/null)
-        [[ -n "$email" && "$email" != "null" ]] && emails_to_reset+=("$email")
-    done
-
-    if [[ ${#emails_to_reset[@]} -eq 0 ]]; then
-        print_error "无效的选择"
-        return 1
-    fi
-
-    # 确认操作
-    echo ""
-    print_warning "将重置以下 ${#emails_to_reset[@]} 个用户的流量统计:"
-    for email in "${emails_to_reset[@]}"; do
-        echo "  - $email"
-    done
-    echo ""
-    if ! confirm "确认重置?"; then
-        print_info "已取消操作"
-        return 0
-    fi
-
-    # 执行批量重置（这里简化处理）
-    local success_count=0
-    for email in "${emails_to_reset[@]}"; do
-        # 重置流量统计（实际应该调用 xray api 或重置统计文件）
-        echo "  重置流量: $email"
-        ((success_count++))
-    done
-
-    echo ""
-    print_success "批量重置完成！已重置 $success_count 个用户的流量"
-}

@@ -941,34 +941,266 @@ get_node_port_by_index() {
     jq -r ".nodes[$((index-1))].port" "$NODES_FILE" 2>/dev/null
 }
 
-# 修改节点
-modify_node() {
+# 显示节点详情（包含用户、配置、分享链接）
+show_node_detail() {
+    local port=$1
+
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      节点详情                        ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 获取节点信息
+    local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+    if [[ -z "$node" || "$node" == "null" ]]; then
+        print_error "节点不存在"
+        return 1
+    fi
+
+    local protocol=$(echo "$node" | jq -r '.protocol')
+    local transport=$(echo "$node" | jq -r '.transport')
+    local security=$(echo "$node" | jq -r '.security')
+    local extra=$(echo "$node" | jq -r '.extra')
+    local created=$(echo "$node" | jq -r '.created')
+
+    echo -e "${GREEN}基本信息：${NC}"
+    echo -e "  端口: ${YELLOW}$port${NC}"
+    echo -e "  协议: ${YELLOW}$protocol${NC}"
+    echo -e "  传输: ${YELLOW}$transport${NC}"
+    echo -e "  安全: ${YELLOW}$security${NC}"
+    echo -e "  创建时间: ${YELLOW}${created:0:19}${NC}"
+    echo ""
+
+    # 显示协议特定配置
+    if [[ "$security" == "reality" ]]; then
+        local dest=$(echo "$extra" | jq -r '.dest // empty')
+        local sni=$(echo "$extra" | jq -r '.server_names[0] // empty')
+        local public_key=$(echo "$extra" | jq -r '.public_key // empty')
+        local short_id=$(echo "$extra" | jq -r '.short_ids[0] // empty')
+
+        echo -e "${GREEN}Reality 配置：${NC}"
+        echo -e "  目标网站: ${YELLOW}$dest${NC}"
+        echo -e "  伪装域名: ${YELLOW}$sni${NC}"
+        echo -e "  公钥: ${YELLOW}${public_key:0:20}...${NC}"
+        echo -e "  ShortId: ${YELLOW}$short_id${NC}"
+        echo ""
+    elif [[ "$security" == "tls" ]]; then
+        local tls_domain=$(echo "$extra" | jq -r '.tls_domain // empty')
+        echo -e "${GREEN}TLS 配置：${NC}"
+        echo -e "  域名: ${YELLOW}$tls_domain${NC}"
+        echo ""
+    fi
+
+    # 显示绑定的用户列表
+    echo -e "${GREEN}绑定用户：${NC}"
+    local users=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[]" "$NODE_USERS_FILE" 2>/dev/null)
+
+    if [[ -z "$users" ]]; then
+        echo -e "  ${YELLOW}无绑定用户${NC}"
+    else
+        local user_count=0
+        while IFS= read -r uuid; do
+            local user=$(jq -r ".users[] | select(.id == \"$uuid\")" "$USERS_FILE" 2>/dev/null)
+            if [[ -n "$user" && "$user" != "null" ]]; then
+                local username=$(echo "$user" | jq -r '.username // "未设置"')
+                local enabled=$(echo "$user" | jq -r '.enabled // true')
+
+                local status_text=""
+                if [[ "$enabled" == "true" ]]; then
+                    status_text="${GREEN}启用${NC}"
+                else
+                    status_text="${RED}禁用${NC}"
+                fi
+
+                echo -e "  ${CYAN}•${NC} $username (状态: $status_text)"
+                ((user_count++))
+            fi
+        done <<< "$users"
+        echo -e "  ${YELLOW}共 $user_count 个用户${NC}"
+    fi
+    echo ""
+}
+
+# 修改节点配置（整合了绑定用户功能）
+modify_node_config() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      修改节点配置                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
     list_nodes
 
     echo ""
-    read -p "请输入要修改的节点序号或端口: " input
-    if [[ -z "$input" ]]; then
+    read -p "请输入要修改的节点序号: " node_idx
+    if [[ -z "$node_idx" ]]; then
         print_error "输入不能为空"
         return 1
     fi
 
-    local port=""
-    # 判断是序号还是端口
-    if [[ "$input" =~ ^[0-9]+$ ]] && [[ "$input" -le 100 ]]; then
-        # 可能是序号，尝试获取端口
-        port=$(get_node_port_by_index "$input")
-        if [[ -z "$port" || "$port" == "null" ]]; then
-            # 不是有效序号，当作端口处理
-            port="$input"
-        else
-            print_info "选择的节点端口: $port"
-        fi
-    else
-        port="$input"
+    local port=$(get_node_port_by_index "$node_idx")
+    if [[ -z "$port" || "$port" == "null" ]]; then
+        print_error "无效的节点序号"
+        return 1
     fi
 
-    print_info "节点修改功能开发中..."
-    # TODO: 实现修改节点配置
+    # 显示当前节点详情
+    show_node_detail "$port"
+
+    echo ""
+    echo -e "${CYAN}可修改的项目：${NC}"
+    echo -e "${GREEN}1.${NC} 修改端口"
+    echo -e "${GREEN}2.${NC} 绑定用户到此节点"
+    echo -e "${GREEN}3.${NC} 从节点解绑用户"
+    echo -e "${GREEN}0.${NC} 返回"
+    echo ""
+    read -p "请选择 [0-3]: " choice
+
+    case $choice in
+        1)
+            echo ""
+            read -p "请输入新端口: " new_port
+            if [[ -n "$new_port" ]]; then
+                # 检查新端口是否已被占用
+                if check_port_exists "$new_port"; then
+                    print_error "端口 $new_port 已被占用"
+                    return 1
+                fi
+
+                # 更新节点信息
+                jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                mv "${NODES_FILE}.tmp" "$NODES_FILE"
+
+                # 更新绑定信息
+                if [[ -f "$NODE_USERS_FILE" ]]; then
+                    jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+                fi
+
+                # 更新配置文件
+                remove_inbound_from_config "$port"
+                generate_xray_config
+                restart_xray
+
+                print_success "端口已修改为 $new_port"
+            fi
+            ;;
+        2)
+            # 绑定用户
+            echo ""
+            list_global_users
+            echo ""
+            read -p "请输入要绑定的用户名: " username
+            if [[ -n "$username" ]]; then
+                local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+                if [[ -z "$uuid" ]]; then
+                    print_error "用户不存在: $username"
+                else
+                    # 检查是否已绑定
+                    local already_bound=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[] | select(. == \"$uuid\")" "$NODE_USERS_FILE" 2>/dev/null)
+                    if [[ -n "$already_bound" ]]; then
+                        print_warning "用户已绑定"
+                    else
+                        # 添加绑定
+                        local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+                        if [[ -z "$binding_exists" ]]; then
+                            local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
+                            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                        else
+                            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                        fi
+                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+                        generate_xray_config
+                        restart_xray
+                        print_success "用户已绑定"
+                    fi
+                fi
+            fi
+            ;;
+        3)
+            # 解绑用户
+            echo ""
+            local users=$(jq -r ".bindings[] | select(.port == \"$port\") | .users[]" "$NODE_USERS_FILE" 2>/dev/null)
+            if [[ -z "$users" ]]; then
+                print_warning "该节点没有绑定用户"
+            else
+                echo -e "${YELLOW}该节点绑定的用户：${NC}"
+                local idx=1
+                while IFS= read -r uuid; do
+                    local username=$(jq -r ".users[] | select(.id == \"$uuid\") | .username" "$USERS_FILE" 2>/dev/null)
+                    echo "  $idx. $username"
+                    ((idx++))
+                done <<< "$users"
+                echo ""
+                read -p "请输入要解绑的用户名: " username
+                if [[ -n "$username" ]]; then
+                    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
+                    if [[ -n "$uuid" ]]; then
+                        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+                        generate_xray_config
+                        restart_xray
+                        print_success "用户已解绑"
+                    fi
+                fi
+            fi
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            print_error "无效选择"
+            ;;
+    esac
+}
+
+# 删除单个节点
+delete_single_node() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      删除节点                        ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    list_nodes
+
+    echo ""
+    read -p "请输入要删除的节点序号: " node_idx
+    if [[ -z "$node_idx" ]]; then
+        print_error "输入不能为空"
+        return 1
+    fi
+
+    local port=$(get_node_port_by_index "$node_idx")
+    if [[ -z "$port" || "$port" == "null" ]]; then
+        print_error "无效的节点序号"
+        return 1
+    fi
+
+    # 确认删除
+    echo ""
+    print_warning "将删除端口 $port 的节点"
+    read -p "确认删除? [y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        print_info "已取消删除"
+        return 0
+    fi
+
+    # 从配置文件中删除
+    remove_inbound_from_config "$port"
+
+    # 从节点数据库中删除
+    remove_node_info "$port"
+
+    # 清理节点绑定
+    if [[ -f "$NODE_USERS_FILE" ]]; then
+        jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+    fi
+
+    restart_xray
+    print_success "节点删除成功！"
 }
 
 # 生成自签名证书

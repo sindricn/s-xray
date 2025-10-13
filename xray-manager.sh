@@ -289,21 +289,19 @@ menu_node() {
         echo ""
         echo -e "${GREEN}1.${NC} 快速搭建（VLESS + Reality 推荐）"
         echo -e "${GREEN}2.${NC} 添加节点（VLESS/VMess/Trojan/SS）"
-        echo -e "${GREEN}3.${NC} 节点列表与详情"
-        echo -e "${GREEN}4.${NC} 修改节点（含删除）"
-        echo -e "${GREEN}5.${NC} 批量操作"
-        echo -e "${GREEN}6.${NC} 节点用户管理"
+        echo -e "${GREEN}3.${NC} 查看节点"
+        echo -e "${GREEN}4.${NC} 修改节点（含绑定用户、删除）"
+        echo -e "${GREEN}5.${NC} 节点用户管理"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-6]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
             1) quick_add_vless_reality ;;
             2) menu_node_add ;;
             3) menu_node_list_and_detail ;;
             4) menu_node_modify ;;
-            5) menu_node_batch ;;
-            6) menu_node_users ;;
+            5) menu_node_users ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -341,12 +339,12 @@ menu_node_add() {
     done
 }
 
-# 节点列表与详情子菜单
+# 节点列表与详情子菜单（优化：选择节点后直接查看详情）
 menu_node_list_and_detail() {
     while true; do
         clear
         echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║      节点列表与详情                  ║${NC}"
+        echo -e "${CYAN}║      查看节点                        ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
 
@@ -354,47 +352,38 @@ menu_node_list_and_detail() {
         list_nodes
 
         echo ""
-        echo -e "${GREEN}1.${NC} 查看节点详情（用户、配置）"
-        echo -e "${GREEN}2.${NC} 查看节点分享链接"
-        echo -e "${GREEN}3.${NC} 刷新列表"
-        echo -e "${GREEN}0.${NC} 返回上级菜单"
-        echo ""
-        read -p "请选择操作 [0-3]: " choice
+        read -p "请输入节点序号查看详情（0返回）: " node_idx
 
-        case $choice in
-            1)
-                echo ""
-                read -p "请输入节点序号: " node_idx
-                if [[ -n "$node_idx" ]]; then
-                    # 显示节点用户列表
-                    show_node_users
-                fi
-                read -p "按 Enter 键继续..."
-                ;;
-            2)
-                show_node_share_link
-                read -p "按 Enter 键继续..."
-                ;;
-            3)
-                continue
-                ;;
-            0)
-                break
-                ;;
-            *)
-                print_error "无效选择"
-                read -p "按 Enter 键继续..."
-                ;;
-        esac
+        if [[ "$node_idx" == "0" ]]; then
+            break
+        fi
+
+        if [[ -z "$node_idx" ]]; then
+            print_error "输入不能为空"
+            read -p "按 Enter 键继续..."
+            continue
+        fi
+
+        # 获取节点端口
+        local port=$(get_node_port_by_index "$node_idx")
+        if [[ -z "$port" || "$port" == "null" ]]; then
+            print_error "无效的节点序号"
+            read -p "按 Enter 键继续..."
+            continue
+        fi
+
+        # 显示节点详情（包含用户、配置、分享链接）
+        show_node_detail "$port"
+        read -p "按 Enter 键继续..."
     done
 }
 
-# 节点修改子菜单（整合删除）
+# 节点修改子菜单（整合删除和批量删除）
 menu_node_modify() {
     while true; do
         clear
         echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║          修改节点                    ║${NC}"
+        echo -e "${CYAN}║          修改/删除节点              ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
 
@@ -402,58 +391,24 @@ menu_node_modify() {
         list_nodes
 
         echo ""
-        echo -e "${GREEN}1.${NC} 修改节点配置（端口、传输、加密）"
-        echo -e "${GREEN}2.${NC} 删除节点"
-        echo -e "${GREEN}0.${NC} 返回上级菜单"
-        echo ""
-        read -p "请选择操作 [0-2]: " choice
-
-        case $choice in
-            1)
-                modify_node
-                read -p "按 Enter 键继续..."
-                ;;
-            2)
-                delete_node
-                read -p "按 Enter 键继续..."
-                ;;
-            0)
-                break
-                ;;
-            *)
-                print_error "无效选择"
-                read -p "按 Enter 键继续..."
-                ;;
-        esac
-    done
-}
-
-# 节点批量操作子菜单
-menu_node_batch() {
-    while true; do
-        clear
-        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║          批量操作                    ║${NC}"
-        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e "${GREEN}1.${NC} 批量删除节点"
-        echo -e "${GREEN}2.${NC} 批量启用/禁用节点"
-        echo -e "${GREEN}3.${NC} 批量修改端口"
+        echo -e "${GREEN}1.${NC} 修改节点配置（含绑定用户）"
+        echo -e "${GREEN}2.${NC} 删除节点（单个）"
+        echo -e "${GREEN}3.${NC} 批量删除节点"
         echo -e "${GREEN}0.${NC} 返回上级菜单"
         echo ""
         read -p "请选择操作 [0-3]: " choice
 
         case $choice in
             1)
-                batch_delete_nodes
+                modify_node_config
                 read -p "按 Enter 键继续..."
                 ;;
             2)
-                batch_toggle_nodes
+                delete_single_node
                 read -p "按 Enter 键继续..."
                 ;;
             3)
-                batch_modify_ports
+                batch_delete_nodes
                 read -p "按 Enter 键继续..."
                 ;;
             0)
@@ -466,6 +421,7 @@ menu_node_batch() {
         esac
     done
 }
+
 
 # 节点用户管理子菜单
 menu_node_users() {
@@ -514,25 +470,19 @@ menu_user() {
         echo -e "${CYAN}║          用户管理                    ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "${GREEN}1.${NC} 用户列表与详情"
+        echo -e "${GREEN}1.${NC} 查看用户"
         echo -e "${GREEN}2.${NC} 添加用户"
-        echo -e "${GREEN}3.${NC} 修改用户（含删除、绑定、解绑）"
+        echo -e "${GREEN}3.${NC} 修改用户（含绑定节点、删除）"
         echo -e "${GREEN}4.${NC} 批量操作"
-        echo -e "${GREEN}5.${NC} 生成 UUID"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-5]: " choice
+        read -p "请选择操作 [0-4]: " choice
 
         case $choice in
             1) menu_user_list_and_detail ;;
             2) add_global_user ;;
             3) menu_user_modify ;;
             4) menu_user_batch ;;
-            5)
-                echo ""
-                local uuid=$(generate_uuid)
-                print_success "生成的UUID: $uuid"
-                ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
@@ -541,12 +491,12 @@ menu_user() {
     done
 }
 
-# 用户列表与详情子菜单
+# 用户列表与详情子菜单（优化：使用用户名查询）
 menu_user_list_and_detail() {
     while true; do
         clear
         echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║      用户列表与详情                  ║${NC}"
+        echo -e "${CYAN}║      查看用户                        ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
 
@@ -554,32 +504,21 @@ menu_user_list_and_detail() {
         list_global_users
 
         echo ""
-        echo -e "${GREEN}1.${NC} 查看用户详情（绑定节点、流量统计）"
-        echo -e "${GREEN}2.${NC} 刷新列表"
-        echo -e "${GREEN}0.${NC} 返回上级菜单"
-        echo ""
-        read -p "请选择操作 [0-2]: " choice
+        read -p "请输入用户名查看详情（0返回）: " username
 
-        case $choice in
-            1)
-                echo ""
-                read -p "请输入用户邮箱: " user_email
-                if [[ -n "$user_email" ]]; then
-                    show_user_nodes "$user_email"
-                fi
-                read -p "按 Enter 键继续..."
-                ;;
-            2)
-                continue
-                ;;
-            0)
-                break
-                ;;
-            *)
-                print_error "无效选择"
-                read -p "按 Enter 键继续..."
-                ;;
-        esac
+        if [[ "$username" == "0" ]]; then
+            break
+        fi
+
+        if [[ -z "$username" ]]; then
+            print_error "输入不能为空"
+            read -p "按 Enter 键继续..."
+            continue
+        fi
+
+        # 显示用户详情（包含绑定节点）
+        show_user_detail "$username"
+        read -p "按 Enter 键继续..."
     done
 }
 
@@ -588,7 +527,7 @@ menu_user_modify() {
     while true; do
         clear
         echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║          修改用户                    ║${NC}"
+        echo -e "${CYAN}║          修改/删除用户              ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
 
@@ -596,13 +535,14 @@ menu_user_modify() {
         list_global_users
 
         echo ""
-        echo -e "${GREEN}1.${NC} 修改用户基本信息（用户名、密码、UUID）"
+        echo -e "${GREEN}1.${NC} 修改用户信息（用户名、密码、邮箱、UUID）"
         echo -e "${GREEN}2.${NC} 绑定用户到节点"
         echo -e "${GREEN}3.${NC} 从节点解绑用户"
-        echo -e "${GREEN}4.${NC} 删除用户"
+        echo -e "${GREEN}4.${NC} 删除用户（单个）"
+        echo -e "${GREEN}5.${NC} 批量删除用户"
         echo -e "${GREEN}0.${NC} 返回上级菜单"
         echo ""
-        read -p "请选择操作 [0-4]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
             1)
@@ -618,7 +558,11 @@ menu_user_modify() {
                 read -p "按 Enter 键继续..."
                 ;;
             4)
-                delete_global_user
+                delete_single_user
+                read -p "按 Enter 键继续..."
+                ;;
+            5)
+                batch_delete_users
                 read -p "按 Enter 键继续..."
                 ;;
             0)
@@ -632,7 +576,7 @@ menu_user_modify() {
     done
 }
 
-# 用户批量操作子菜单
+# 用户批量操作子菜单（简化）
 menu_user_batch() {
     while true; do
         clear
@@ -643,10 +587,9 @@ menu_user_batch() {
         echo -e "${GREEN}1.${NC} 批量绑定用户到多个节点"
         echo -e "${GREEN}2.${NC} 批量解绑用户"
         echo -e "${GREEN}3.${NC} 批量删除用户"
-        echo -e "${GREEN}4.${NC} 批量重置流量"
         echo -e "${GREEN}0.${NC} 返回上级菜单"
         echo ""
-        read -p "请选择操作 [0-4]: " choice
+        read -p "请选择操作 [0-3]: " choice
 
         case $choice in
             1)
@@ -659,10 +602,6 @@ menu_user_batch() {
                 ;;
             3)
                 batch_delete_users
-                read -p "按 Enter 键继续..."
-                ;;
-            4)
-                batch_reset_traffic
                 read -p "按 Enter 键继续..."
                 ;;
             0)
