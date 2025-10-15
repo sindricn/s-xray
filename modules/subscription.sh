@@ -4,7 +4,142 @@
 # 订阅管理模块 - 修复版
 # 功能：生成有效的订阅链接、支持用户绑定、查看单个节点链接
 # 修复：订阅链接生成逻辑、用户绑定、admin默认用户
+# 新增：订阅元数据管理（有效期、流量限制）
 #================================================================
+
+# 订阅元数据文件
+SUBSCRIPTION_META_FILE="${DATA_DIR}/subscription_metadata.json"
+
+# 初始化订阅元数据文件
+init_subscription_metadata() {
+    if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
+        echo '{"subscriptions":[]}' > "$SUBSCRIPTION_META_FILE"
+    fi
+}
+
+# 保存订阅元数据
+# 参数: sub_name, expire_date, traffic_limit_gb, traffic_used_gb
+save_subscription_metadata() {
+    local sub_name="$1"
+    local expire_date="$2"        # 格式: YYYY-MM-DD 或 "unlimited"
+    local traffic_limit_gb="$3"   # 流量限制(GB) 或 "unlimited"
+    local traffic_used_gb="${4:-0}"  # 已使用流量(GB)，默认0
+
+    init_subscription_metadata
+
+    local metadata=$(jq -n \
+        --arg name "$sub_name" \
+        --arg expire "$expire_date" \
+        --arg limit "$traffic_limit_gb" \
+        --arg used "$traffic_used_gb" \
+        --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
+        --arg updated "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '{name: $name, expire_date: $expire, traffic_limit_gb: $limit, traffic_used_gb: $used, created: $created, updated: $updated}')
+
+    # 检查订阅是否已存在
+    local existing=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
+
+    if [[ -n "$existing" ]]; then
+        # 更新现有元数据
+        jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {expire_date: \"$expire_date\", traffic_limit_gb: \"$traffic_limit_gb\", traffic_used_gb: \"$traffic_used_gb\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
+            "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+    else
+        # 添加新元数据
+        jq ".subscriptions += [$metadata]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+    fi
+
+    mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
+}
+
+# 获取订阅元数据
+get_subscription_metadata() {
+    local sub_name="$1"
+
+    if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
+        echo "{}"
+        return
+    fi
+
+    local metadata=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
+
+    if [[ -z "$metadata" || "$metadata" == "null" ]]; then
+        echo "{}"
+    else
+        echo "$metadata"
+    fi
+}
+
+# 删除订阅元数据
+delete_subscription_metadata() {
+    local sub_name="$1"
+
+    if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
+        return
+    fi
+
+    jq ".subscriptions |= map(select(.name != \"$sub_name\"))" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+    mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
+}
+
+# 检查订阅是否过期
+is_subscription_expired() {
+    local sub_name="$1"
+    local metadata=$(get_subscription_metadata "$sub_name")
+
+    if [[ -z "$metadata" || "$metadata" == "{}" ]]; then
+        return 1  # 没有元数据，默认不过期
+    fi
+
+    local expire_date=$(echo "$metadata" | jq -r '.expire_date // "unlimited"')
+
+    if [[ "$expire_date" == "unlimited" ]]; then
+        return 1  # 无限期
+    fi
+
+    local expire_timestamp=$(date -d "$expire_date" +%s 2>/dev/null)
+    local current_timestamp=$(date +%s)
+
+    if [[ $current_timestamp -gt $expire_timestamp ]]; then
+        return 0  # 已过期
+    else
+        return 1  # 未过期
+    fi
+}
+
+# 检查订阅流量是否超限
+is_subscription_traffic_exceeded() {
+    local sub_name="$1"
+    local metadata=$(get_subscription_metadata "$sub_name")
+
+    if [[ -z "$metadata" || "$metadata" == "{}" ]]; then
+        return 1  # 没有元数据，默认不超限
+    fi
+
+    local traffic_limit=$(echo "$metadata" | jq -r '.traffic_limit_gb // "unlimited"')
+
+    if [[ "$traffic_limit" == "unlimited" ]]; then
+        return 1  # 无限流量
+    fi
+
+    local traffic_used=$(echo "$metadata" | jq -r '.traffic_used_gb // "0"')
+
+    # 比较流量（使用bc进行浮点数比较）
+    if command -v bc &> /dev/null; then
+        local exceeded=$(echo "$traffic_used > $traffic_limit" | bc)
+        if [[ "$exceeded" -eq 1 ]]; then
+            return 0  # 已超限
+        fi
+    else
+        # 如果没有bc，使用整数比较
+        local used_int=${traffic_used%.*}
+        local limit_int=${traffic_limit%.*}
+        if [[ $used_int -gt $limit_int ]]; then
+            return 0  # 已超限
+        fi
+    fi
+
+    return 1  # 未超限
+}
 
 # 获取admin用户信息
 # 返回格式: UUID|password|username
@@ -700,17 +835,21 @@ show_node_share_link() {
             continue
         fi
 
+        local name=$(echo "$node" | jq -r '.name // "未命名"')
         local protocol=$(echo "$node" | jq -r '.protocol')
         local port=$(echo "$node" | jq -r '.port')
+        local transport=$(echo "$node" | jq -r '.transport // "N/A"')
+        local security=$(echo "$node" | jq -r '.security // "N/A"')
 
-        printf "${CYAN}[%d]${NC} %s:%s\n" "$index" "$protocol" "$port"
+        printf "${CYAN}[%d]${NC} ${YELLOW}%-20s${NC} (%s/%s/%s - 端口:%s)\n" "$index" "$name" "$protocol" "$transport" "$security" "$port"
         ((index++))
     done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
 
     echo ""
     read -p "请输入节点序号: " node_index
 
-    if [[ ! "$node_index" =~ ^[0-9]+$ ]]; then
+    # 验证输入
+    if [[ ! "$node_index" =~ ^[0-9]+$ ]] || [[ "$node_index" -lt 1 ]] || [[ "$node_index" -gt "$((index-1))" ]]; then
         print_error "无效的序号"
         return 1
     fi
@@ -722,11 +861,13 @@ show_node_share_link() {
         return 1
     fi
 
+    local name=$(echo "$node" | jq -r '.name // "未命名"')
     local protocol=$(echo "$node" | jq -r '.protocol')
     local port=$(echo "$node" | jq -r '.port')
 
     echo ""
     echo -e "${CYAN}节点信息：${NC}"
+    echo -e "  节点名称: ${YELLOW}$name${NC}"
     echo -e "  协议: ${YELLOW}$protocol${NC}"
     echo -e "  端口: ${YELLOW}$port${NC}"
     echo ""
@@ -773,16 +914,17 @@ show_node_share_link() {
 
                     local uid=$(echo "$user" | jq -r '.id')
                     local uname=$(echo "$user" | jq -r '.username')
-                    local uemail=$(echo "$user" | jq -r '.email')
+                    local uemail=$(echo "$user" | jq -r '.email // "无邮箱"')
 
-                    printf "${CYAN}[%d]${NC} %s (%s) - UUID: %s\n" "$uindex" "$uname" "$uemail" "${uid:0:16}..."
+                    printf "${CYAN}[%d]${NC} ${YELLOW}%s${NC} (%s) - UUID: %s\n" "$uindex" "$uname" "$uemail" "${uid:0:16}..."
                     ((uindex++))
                 done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
 
                 echo ""
                 read -p "请输入用户序号: " user_index
 
-                if [[ ! "$user_index" =~ ^[0-9]+$ ]]; then
+                # 验证输入
+                if [[ ! "$user_index" =~ ^[0-9]+$ ]] || [[ "$user_index" -lt 1 ]] || [[ "$user_index" -gt "$((uindex-1))" ]]; then
                     print_error "无效的序号"
                     return 1
                 fi
@@ -902,16 +1044,18 @@ generate_subscription_with_user() {
                     fi
 
                     local uid=$(echo "$user" | jq -r '.id')
-                    local uemail=$(echo "$user" | jq -r '.email')
+                    local uname=$(echo "$user" | jq -r '.username')
+                    local uemail=$(echo "$user" | jq -r '.email // "无邮箱"')
 
-                    printf "${CYAN}[%d]${NC} %s - %s\n" "$index" "$uemail" "$uid"
+                    printf "${CYAN}[%d]${NC} ${YELLOW}%s${NC} (%s) - UUID: %s\n" "$index" "$uname" "$uemail" "${uid:0:16}..."
                     ((index++))
                 done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
 
                 echo ""
                 read -p "请输入用户序号: " user_index
 
-                if [[ ! "$user_index" =~ ^[0-9]+$ ]]; then
+                # 验证输入
+                if [[ ! "$user_index" =~ ^[0-9]+$ ]] || [[ "$user_index" -lt 1 ]] || [[ "$user_index" -gt "$((index-1))" ]]; then
                     print_error "无效的序号"
                     return 1
                 fi
@@ -923,7 +1067,7 @@ generate_subscription_with_user() {
                 fi
 
                 sub_user_id=$(echo "$user" | jq -r '.id')
-                sub_user_email=$(echo "$user" | jq -r '.email')
+                sub_user_email=$(echo "$user" | jq -r '.username')  # 使用用户名而不是邮箱
             fi
         fi
     fi
@@ -954,6 +1098,92 @@ generate_subscription_with_user() {
     echo ""
     read -p "请选择 [1-3，默认: 1]: " sub_type
     sub_type=${sub_type:-1}
+
+    # 订阅有效期设置
+    echo ""
+    echo -e "${CYAN}订阅有效期设置：${NC}"
+    echo -e "  ${GREEN}1.${NC} 无限期"
+    echo -e "  ${GREEN}2.${NC} 1个月"
+    echo -e "  ${GREEN}3.${NC} 3个月"
+    echo -e "  ${GREEN}4.${NC} 6个月"
+    echo -e "  ${GREEN}5.${NC} 1年"
+    echo -e "  ${GREEN}6.${NC} 自定义（天数）"
+    echo ""
+    read -p "请选择 [1-6，默认: 1]: " expire_choice
+    expire_choice=${expire_choice:-1}
+
+    local expire_date="unlimited"
+    case $expire_choice in
+        1)
+            expire_date="unlimited"
+            ;;
+        2)
+            expire_date=$(date -d "+1 month" +%Y-%m-%d 2>/dev/null || date -v+1m +%Y-%m-%d 2>/dev/null)
+            ;;
+        3)
+            expire_date=$(date -d "+3 months" +%Y-%m-%d 2>/dev/null || date -v+3m +%Y-%m-%d 2>/dev/null)
+            ;;
+        4)
+            expire_date=$(date -d "+6 months" +%Y-%m-%d 2>/dev/null || date -v+6m +%Y-%m-%d 2>/dev/null)
+            ;;
+        5)
+            expire_date=$(date -d "+1 year" +%Y-%m-%d 2>/dev/null || date -v+1y +%Y-%m-%d 2>/dev/null)
+            ;;
+        6)
+            read -p "请输入天数: " custom_days
+            if [[ "$custom_days" =~ ^[0-9]+$ ]] && [[ $custom_days -gt 0 ]]; then
+                expire_date=$(date -d "+${custom_days} days" +%Y-%m-%d 2>/dev/null || date -v+${custom_days}d +%Y-%m-%d 2>/dev/null)
+            else
+                print_warning "无效的天数，使用无限期"
+                expire_date="unlimited"
+            fi
+            ;;
+    esac
+
+    # 流量限制设置
+    echo ""
+    echo -e "${CYAN}流量限制设置：${NC}"
+    echo -e "  ${GREEN}1.${NC} 无限流量"
+    echo -e "  ${GREEN}2.${NC} 10GB"
+    echo -e "  ${GREEN}3.${NC} 50GB"
+    echo -e "  ${GREEN}4.${NC} 100GB"
+    echo -e "  ${GREEN}5.${NC} 500GB"
+    echo -e "  ${GREEN}6.${NC} 1TB (1024GB)"
+    echo -e "  ${GREEN}7.${NC} 自定义（GB）"
+    echo ""
+    read -p "请选择 [1-7，默认: 1]: " traffic_choice
+    traffic_choice=${traffic_choice:-1}
+
+    local traffic_limit="unlimited"
+    case $traffic_choice in
+        1)
+            traffic_limit="unlimited"
+            ;;
+        2)
+            traffic_limit="10"
+            ;;
+        3)
+            traffic_limit="50"
+            ;;
+        4)
+            traffic_limit="100"
+            ;;
+        5)
+            traffic_limit="500"
+            ;;
+        6)
+            traffic_limit="1024"
+            ;;
+        7)
+            read -p "请输入流量限制（GB）: " custom_traffic
+            if [[ "$custom_traffic" =~ ^[0-9]+(\.[0-9]+)?$ ]] && (( $(echo "$custom_traffic > 0" | bc -l 2>/dev/null || echo "0") )); then
+                traffic_limit="$custom_traffic"
+            else
+                print_warning "无效的流量值，使用无限流量"
+                traffic_limit="unlimited"
+            fi
+            ;;
+    esac
 
     # 收集所有分享链接（新架构：只生成用户绑定的节点）
     print_info "正在生成分享链接..."
@@ -1097,6 +1327,9 @@ generate_subscription_with_user() {
     # 保存订阅信息到数据库
     save_subscription_info "$sub_name" "$sub_url" "$sub_file" "$sub_type" "$sub_user_email"
 
+    # 保存订阅元数据（有效期和流量限制）
+    save_subscription_metadata "$sub_name" "$expire_date" "$traffic_limit" "0"
+
     # 启动订阅服务
     setup_subscription_server "$sub_port"
 
@@ -1111,6 +1344,16 @@ generate_subscription_with_user() {
     echo -e "  绑定用户: ${YELLOW}$sub_user_email${NC}"
     echo -e "  节点数量: ${YELLOW}$link_count${NC}"
     echo -e "  订阅类型: ${YELLOW}$(get_sub_type_name $sub_type)${NC}"
+    if [[ "$expire_date" != "unlimited" ]]; then
+        echo -e "  有效期至: ${YELLOW}$expire_date${NC}"
+    else
+        echo -e "  有效期至: ${YELLOW}无限期${NC}"
+    fi
+    if [[ "$traffic_limit" != "unlimited" ]]; then
+        echo -e "  流量限制: ${YELLOW}${traffic_limit}GB${NC}"
+    else
+        echo -e "  流量限制: ${YELLOW}无限${NC}"
+    fi
     echo ""
     echo -e "${CYAN}订阅链接：${NC}"
     echo -e "${GREEN}${sub_url}${NC}"
@@ -1188,7 +1431,7 @@ show_subscription() {
 
     echo -e "${YELLOW}订阅总数:${NC} $sub_count"
     echo ""
-    printf "${CYAN}%-4s %-20s %-15s %-15s %-40s${NC}\n" "序号" "订阅名称" "绑定用户" "类型" "订阅URL"
+    printf "${CYAN}%-4s %-20s %-15s %-12s %-15s %-15s${NC}\n" "序号" "订阅名称" "绑定用户" "类型" "有效期" "流量限制"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     local index=1
@@ -1203,7 +1446,35 @@ show_subscription() {
         local user=$(echo "$sub" | jq -r '.user // "N/A"')
         local type_name=$(get_sub_type_name "$type")
 
-        printf "%-4s %-20s %-15s %-15s %-40s\n" "$index" "$name" "$user" "$type_name" "$url"
+        # 获取元数据
+        local metadata=$(get_subscription_metadata "$name")
+        local expire_display="无限期"
+        local traffic_display="无限"
+
+        if [[ -n "$metadata" && "$metadata" != "{}" ]]; then
+            local expire_date=$(echo "$metadata" | jq -r '.expire_date // "unlimited"')
+            local traffic_limit=$(echo "$metadata" | jq -r '.traffic_limit_gb // "unlimited"')
+            local traffic_used=$(echo "$metadata" | jq -r '.traffic_used_gb // "0"')
+
+            if [[ "$expire_date" != "unlimited" ]]; then
+                # 检查是否过期
+                if is_subscription_expired "$name"; then
+                    expire_display="${expire_date}(已过期)"
+                else
+                    expire_display="$expire_date"
+                fi
+            fi
+
+            if [[ "$traffic_limit" != "unlimited" ]]; then
+                traffic_display="${traffic_used}/${traffic_limit}GB"
+                # 检查是否超限
+                if is_subscription_traffic_exceeded "$name"; then
+                    traffic_display="${traffic_display}(超限)"
+                fi
+            fi
+        fi
+
+        printf "%-4s %-20s %-15s %-12s %-15s %-15s\n" "$index" "$name" "$user" "$type_name" "$expire_display" "$traffic_display"
         ((index++))
     done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
 

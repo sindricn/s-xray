@@ -1130,7 +1130,7 @@ menu_subscription() {
         echo -e "${GREEN}1.${NC} 查看节点链接"
         echo -e "${GREEN}2.${NC} 生成订阅链接"
         echo -e "${GREEN}3.${NC} 查看订阅链接"
-        echo -e "${GREEN}4.${NC} 更新订阅"
+        echo -e "${GREEN}4.${NC} 修改订阅配置"
         echo -e "${GREEN}5.${NC} 删除订阅"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
@@ -1140,23 +1140,338 @@ menu_subscription() {
             1) show_node_share_link ;;  # 查看单个节点链接
             2) generate_subscription_with_user ;;  # 生成订阅链接（支持用户绑定）
             3) show_subscription ;;      # 查看所有订阅链接
-            4)
-                # 更新订阅（重新生成现有订阅）
-                show_subscription
-                echo ""
-                read -p "请输入要更新的订阅名称: " sub_name
-                if [[ -n "$sub_name" ]]; then
-                    # 调用重新生成函数
-                    regenerate_subscription "$sub_name"
-                fi
-                ;;
-            5) delete_subscription ;;
+            4) modify_subscription_menu ;;  # 修改订阅配置
+            5) delete_subscription_smart ;;  # 智能删除订阅（支持批量）
             0) break ;;
             *) print_error "无效选择" ;;
         esac
 
         read -p "按 Enter 键继续..."
     done
+}
+
+# 修改订阅配置菜单
+modify_subscription_menu() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      修改订阅配置                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 显示订阅列表
+    show_subscription
+
+    echo ""
+    read -p "请输入要修改的订阅名称: " sub_name
+
+    if [[ -z "$sub_name" ]]; then
+        print_error "订阅名称不能为空"
+        return 1
+    fi
+
+    # 检查订阅文件是否存在
+    local sub_file="${SUBSCRIPTION_DIR}/${sub_name}"
+    if [[ ! -f "$sub_file" ]]; then
+        print_error "订阅不存在: $sub_name"
+        return 1
+    fi
+
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║      修改订阅: ${YELLOW}$sub_name${CYAN}          ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo ""
+
+        # 显示当前元数据
+        local metadata=$(get_subscription_metadata "$sub_name")
+        if [[ -n "$metadata" && "$metadata" != "{}" ]]; then
+            local expire_date=$(echo "$metadata" | jq -r '.expire_date // "unlimited"')
+            local traffic_limit=$(echo "$metadata" | jq -r '.traffic_limit_gb // "unlimited"')
+            local traffic_used=$(echo "$metadata" | jq -r '.traffic_used_gb // "0"')
+
+            echo -e "${YELLOW}当前设置：${NC}"
+            if [[ "$expire_date" != "unlimited" ]]; then
+                echo -e "  有效期至: ${CYAN}$expire_date${NC}"
+            else
+                echo -e "  有效期至: ${CYAN}无限期${NC}"
+            fi
+
+            if [[ "$traffic_limit" != "unlimited" ]]; then
+                echo -e "  流量限制: ${CYAN}${traffic_limit}GB${NC} (已使用: ${traffic_used}GB)"
+            else
+                echo -e "  流量限制: ${CYAN}无限${NC}"
+            fi
+            echo ""
+        fi
+
+        echo -e "${GREEN}1.${NC} 修改订阅名称"
+        echo -e "${GREEN}2.${NC} 重新生成订阅内容"
+        echo -e "${GREEN}3.${NC} 修改有效期"
+        echo -e "${GREEN}4.${NC} 修改流量限制"
+        echo -e "${GREEN}5.${NC} 重置已使用流量"
+        echo -e "${GREEN}0.${NC} 返回"
+        echo ""
+        read -p "请选择操作 [0-5]: " choice
+
+        case $choice in
+            1)
+                # 修改订阅名称
+                echo ""
+                read -p "请输入新的订阅名称: " new_sub_name
+                if [[ -n "$new_sub_name" ]]; then
+                    # 清理名称
+                    new_sub_name=$(echo "$new_sub_name" | tr -cd 'a-zA-Z0-9_-')
+                    if [[ -z "$new_sub_name" ]]; then
+                        print_error "订阅名称无效"
+                        continue
+                    fi
+
+                    local new_sub_file="${SUBSCRIPTION_DIR}/${new_sub_name}"
+                    if [[ -f "$new_sub_file" ]]; then
+                        print_error "订阅名称已存在: $new_sub_name"
+                        continue
+                    fi
+
+                    # 重命名文件
+                    mv "$sub_file" "$new_sub_file"
+
+                    # 更新元数据中的名称
+                    local old_metadata=$(get_subscription_metadata "$sub_name")
+                    if [[ -n "$old_metadata" && "$old_metadata" != "{}" ]]; then
+                        delete_subscription_metadata "$sub_name"
+                        local old_expire=$(echo "$old_metadata" | jq -r '.expire_date // "unlimited"')
+                        local old_limit=$(echo "$old_metadata" | jq -r '.traffic_limit_gb // "unlimited"')
+                        local old_used=$(echo "$old_metadata" | jq -r '.traffic_used_gb // "0"')
+                        save_subscription_metadata "$new_sub_name" "$old_expire" "$old_limit" "$old_used"
+                    fi
+
+                    print_success "订阅名称已修改为: $new_sub_name"
+                    sub_name="$new_sub_name"
+                    sub_file="$new_sub_file"
+                fi
+                ;;
+            2)
+                # 重新生成订阅内容
+                echo ""
+                print_info "重新生成订阅内容..."
+                if regenerate_subscription "$sub_name"; then
+                    print_success "订阅内容已更新"
+                else
+                    print_error "订阅更新失败"
+                fi
+                ;;
+            3)
+                # 修改有效期
+                echo ""
+                echo -e "${CYAN}修改订阅有效期：${NC}"
+                echo -e "  ${GREEN}1.${NC} 无限期"
+                echo -e "  ${GREEN}2.${NC} 1个月"
+                echo -e "  ${GREEN}3.${NC} 3个月"
+                echo -e "  ${GREEN}4.${NC} 6个月"
+                echo -e "  ${GREEN}5.${NC} 1年"
+                echo -e "  ${GREEN}6.${NC} 自定义（天数）"
+                echo -e "  ${GREEN}7.${NC} 指定日期 (YYYY-MM-DD)"
+                echo ""
+                read -p "请选择 [1-7]: " expire_choice
+
+                local new_expire_date="unlimited"
+                case $expire_choice in
+                    1)
+                        new_expire_date="unlimited"
+                        ;;
+                    2)
+                        new_expire_date=$(date -d "+1 month" +%Y-%m-%d 2>/dev/null || date -v+1m +%Y-%m-%d 2>/dev/null)
+                        ;;
+                    3)
+                        new_expire_date=$(date -d "+3 months" +%Y-%m-%d 2>/dev/null || date -v+3m +%Y-%m-%d 2>/dev/null)
+                        ;;
+                    4)
+                        new_expire_date=$(date -d "+6 months" +%Y-%m-%d 2>/dev/null || date -v+6m +%Y-%m-%d 2>/dev/null)
+                        ;;
+                    5)
+                        new_expire_date=$(date -d "+1 year" +%Y-%m-%d 2>/dev/null || date -v+1y +%Y-%m-%d 2>/dev/null)
+                        ;;
+                    6)
+                        read -p "请输入天数: " custom_days
+                        if [[ "$custom_days" =~ ^[0-9]+$ ]] && [[ $custom_days -gt 0 ]]; then
+                            new_expire_date=$(date -d "+${custom_days} days" +%Y-%m-%d 2>/dev/null || date -v+${custom_days}d +%Y-%m-%d 2>/dev/null)
+                        else
+                            print_error "无效的天数"
+                            continue
+                        fi
+                        ;;
+                    7)
+                        read -p "请输入日期 (YYYY-MM-DD): " custom_date
+                        if [[ "$custom_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                            new_expire_date="$custom_date"
+                        else
+                            print_error "无效的日期格式"
+                            continue
+                        fi
+                        ;;
+                    *)
+                        print_error "无效选择"
+                        continue
+                        ;;
+                esac
+
+                # 更新元数据
+                local current_metadata=$(get_subscription_metadata "$sub_name")
+                local current_limit=$(echo "$current_metadata" | jq -r '.traffic_limit_gb // "unlimited"')
+                local current_used=$(echo "$current_metadata" | jq -r '.traffic_used_gb // "0"')
+                save_subscription_metadata "$sub_name" "$new_expire_date" "$current_limit" "$current_used"
+
+                if [[ "$new_expire_date" != "unlimited" ]]; then
+                    print_success "有效期已设置为: $new_expire_date"
+                else
+                    print_success "有效期已设置为: 无限期"
+                fi
+                ;;
+            4)
+                # 修改流量限制
+                echo ""
+                echo -e "${CYAN}修改流量限制：${NC}"
+                echo -e "  ${GREEN}1.${NC} 无限流量"
+                echo -e "  ${GREEN}2.${NC} 10GB"
+                echo -e "  ${GREEN}3.${NC} 50GB"
+                echo -e "  ${GREEN}4.${NC} 100GB"
+                echo -e "  ${GREEN}5.${NC} 500GB"
+                echo -e "  ${GREEN}6.${NC} 1TB (1024GB)"
+                echo -e "  ${GREEN}7.${NC} 自定义（GB）"
+                echo ""
+                read -p "请选择 [1-7]: " traffic_choice
+
+                local new_traffic_limit="unlimited"
+                case $traffic_choice in
+                    1)
+                        new_traffic_limit="unlimited"
+                        ;;
+                    2)
+                        new_traffic_limit="10"
+                        ;;
+                    3)
+                        new_traffic_limit="50"
+                        ;;
+                    4)
+                        new_traffic_limit="100"
+                        ;;
+                    5)
+                        new_traffic_limit="500"
+                        ;;
+                    6)
+                        new_traffic_limit="1024"
+                        ;;
+                    7)
+                        read -p "请输入流量限制（GB）: " custom_traffic
+                        if [[ "$custom_traffic" =~ ^[0-9]+(\.[0-9]+)?$ ]] && (( $(echo "$custom_traffic > 0" | bc -l 2>/dev/null || echo "1") )); then
+                            new_traffic_limit="$custom_traffic"
+                        else
+                            print_error "无效的流量值"
+                            continue
+                        fi
+                        ;;
+                    *)
+                        print_error "无效选择"
+                        continue
+                        ;;
+                esac
+
+                # 更新元数据
+                local current_metadata=$(get_subscription_metadata "$sub_name")
+                local current_expire=$(echo "$current_metadata" | jq -r '.expire_date // "unlimited"')
+                local current_used=$(echo "$current_metadata" | jq -r '.traffic_used_gb // "0"')
+                save_subscription_metadata "$sub_name" "$current_expire" "$new_traffic_limit" "$current_used"
+
+                if [[ "$new_traffic_limit" != "unlimited" ]]; then
+                    print_success "流量限制已设置为: ${new_traffic_limit}GB"
+                else
+                    print_success "流量限制已设置为: 无限"
+                fi
+                ;;
+            5)
+                # 重置已使用流量
+                echo ""
+                read -p "确认重置已使用流量为0？(y/N): " confirm
+                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                    local current_metadata=$(get_subscription_metadata "$sub_name")
+                    local current_expire=$(echo "$current_metadata" | jq -r '.expire_date // "unlimited"')
+                    local current_limit=$(echo "$current_metadata" | jq -r '.traffic_limit_gb // "unlimited"')
+                    save_subscription_metadata "$sub_name" "$current_expire" "$current_limit" "0"
+                    print_success "已使用流量已重置为0"
+                fi
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                print_error "无效选择"
+                ;;
+        esac
+
+        echo ""
+        read -p "按 Enter 键继续..."
+    done
+}
+
+# 智能删除订阅（支持批量）
+delete_subscription_smart() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      删除订阅                        ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 显示订阅列表
+    show_subscription
+
+    echo ""
+    echo -e "${YELLOW}请输入要删除的订阅名称（多个用空格分隔）${NC}"
+    read -p "订阅名称: " sub_names
+
+    if [[ -z "$sub_names" ]]; then
+        print_error "订阅名称不能为空"
+        return 1
+    fi
+
+    # 确认删除
+    echo ""
+    echo -e "${YELLOW}即将删除以下订阅：${NC}"
+    for sub_name in $sub_names; do
+        echo "  - $sub_name"
+    done
+    echo ""
+    read -p "确认删除？(y/N): " confirm
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        print_info "已取消删除"
+        return 0
+    fi
+
+    local success_count=0
+    local fail_count=0
+
+    for sub_name in $sub_names; do
+        local sub_file="${SUBSCRIPTION_DIR}/${sub_name}"
+
+        if [[ ! -f "$sub_file" ]]; then
+            print_error "订阅不存在: $sub_name"
+            ((fail_count++))
+            continue
+        fi
+
+        # 删除订阅文件
+        rm -f "$sub_file"
+
+        # 删除订阅元数据
+        delete_subscription_metadata "$sub_name"
+
+        print_success "已删除订阅: $sub_name"
+        ((success_count++))
+    done
+
+    echo ""
+    print_info "操作完成：成功 $success_count 个，失败 $fail_count 个"
 }
 
 # 状态监控菜单
