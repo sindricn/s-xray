@@ -868,45 +868,26 @@ modify_user_menu() {
         echo -e "${CYAN}║      修改用户: ${YELLOW}$username${CYAN}              ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "${GREEN}1.${NC} 修改用户名"
-        echo -e "${GREEN}2.${NC} 修改基础信息"
-        echo -e "${GREEN}3.${NC} 添加绑定节点"
-        echo -e "${GREEN}4.${NC} 移除绑定节点"
+        echo -e "${GREEN}1.${NC} 修改基础信息"
+        echo -e "${GREEN}2.${NC} 添加绑定节点"
+        echo -e "${GREEN}3.${NC} 移除绑定节点"
         echo -e "${GREEN}0.${NC} 返回"
         echo ""
-        read -p "请选择操作 [0-4]: " choice
+        read -p "请选择操作 [0-3]: " choice
 
         case $choice in
             1)
-                # 修改用户名
-                local new_username
-                echo ""
-                read -p "请输入新用户名: " new_username
-                if [[ -n "$new_username" ]]; then
-                    # 检查新用户名是否已存在
-                    local exists=$(jq -r ".users[] | select(.username == \"$new_username\") | .username" "$USERS_FILE" 2>/dev/null)
-                    if [[ -n "$exists" ]]; then
-                        print_error "用户名已存在: $new_username"
-                    else
-                        # 更新用户名
-                        jq ".users |= map(if .username == \"$username\" then .username = \"$new_username\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
-                        mv "${USERS_FILE}.tmp" "$USERS_FILE"
-
-                        generate_xray_config
-                        restart_xray
-
-                        print_success "用户名已修改为: $new_username"
-                        username="$new_username"
-                    fi
+                modify_user_info_direct "$username"
+                # 检查用户名是否被修改
+                local new_username=$(jq -r ".users[] | select(.id == \"$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)\") | .username" "$USERS_FILE" 2>/dev/null)
+                if [[ -n "$new_username" && "$new_username" != "$username" ]]; then
+                    username="$new_username"
                 fi
                 ;;
             2)
-                modify_user_info_direct "$username"
-                ;;
-            3)
                 bind_nodes_to_user_smart "$username"
                 ;;
-            4)
+            3)
                 unbind_nodes_from_user_smart "$username"
                 ;;
             0)
@@ -995,8 +976,126 @@ delete_user_smart() {
 modify_user_info_direct() {
     local username=$1
 
-    # 调用原有的modify_user函数
-    modify_user "$username"
+    # 获取用户信息
+    local user_info=$(jq -r ".users[] | select(.username == \"$username\")" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$user_info" || "$user_info" == "null" ]]; then
+        print_error "用户 $username 不存在"
+        return 1
+    fi
+
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      修改用户基础信息: ${YELLOW}$username${CYAN}      ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${YELLOW}当前用户信息：${NC}"
+    echo "$user_info" | jq -r '"  用户名: \(.username)\n  邮箱: \(.email // "未设置")\n  UUID: \(.id)\n  状态: \(if .enabled then "启用" else "禁用" end)"'
+    echo ""
+
+    echo -e "${CYAN}修改选项：${NC}"
+    echo -e "${GREEN}1.${NC} 修改用户名"
+    echo -e "${GREEN}2.${NC} 修改邮箱"
+    echo -e "${GREEN}3.${NC} 修改密码"
+    echo -e "${GREEN}4.${NC} 重置UUID"
+    echo -e "${GREEN}5.${NC} 切换启用/禁用状态"
+    echo -e "${GREEN}0.${NC} 返回"
+    echo ""
+    read -p "请选择 [0-5]: " choice
+
+    case $choice in
+        1)
+            # 修改用户名
+            echo ""
+            read -p "请输入新用户名: " new_username
+            if [[ -n "$new_username" ]]; then
+                # 检查新用户名是否已存在
+                local exists=$(jq -r ".users[] | select(.username == \"$new_username\") | .username" "$USERS_FILE" 2>/dev/null)
+                if [[ -n "$exists" ]]; then
+                    print_error "用户名已存在: $new_username"
+                else
+                    # 更新用户名
+                    jq ".users |= map(if .username == \"$username\" then .username = \"$new_username\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+                    generate_xray_config
+                    restart_xray
+
+                    print_success "用户名已修改为: $new_username"
+                    # 注意：调用者需要更新username变量
+                fi
+            fi
+            ;;
+        2)
+            # 修改邮箱
+            echo ""
+            read -p "请输入新的邮箱: " new_email
+            if [[ -n "$new_email" ]]; then
+                jq ".users |= map(if .username == \"$username\" then .email = \"$new_email\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                mv "${USERS_FILE}.tmp" "$USERS_FILE"
+                print_success "邮箱修改成功"
+                generate_xray_config
+                restart_xray
+            fi
+            ;;
+        3)
+            # 修改密码
+            echo ""
+            read -p "请输入新密码: " new_password
+            if [[ -n "$new_password" ]]; then
+                jq ".users |= map(if .username == \"$username\" then .password = \"$new_password\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                mv "${USERS_FILE}.tmp" "$USERS_FILE"
+                print_success "密码修改成功"
+                generate_xray_config
+                restart_xray
+            fi
+            ;;
+        4)
+            # 重置UUID
+            echo ""
+            local new_uuid=$(generate_uuid)
+            print_info "新 UUID: $new_uuid"
+
+            # 更新用户UUID
+            jq ".users |= map(if .username == \"$username\" then .id = \"$new_uuid\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+            # 同步更新绑定关系中的UUID
+            if [[ -f "$NODE_USERS_FILE" ]]; then
+                local old_uuid=$(echo "$user_info" | jq -r '.id')
+                jq "(.bindings[].users) |= map(if . == \"$old_uuid\" then \"$new_uuid\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+            fi
+
+            print_success "UUID 重置成功"
+            generate_xray_config
+            restart_xray
+            ;;
+        5)
+            # 切换启用/禁用状态
+            echo ""
+            local current_enabled=$(echo "$user_info" | jq -r '.enabled')
+            local new_enabled="true"
+            [[ "$current_enabled" == "true" ]] && new_enabled="false"
+
+            jq ".users |= map(if .username == \"$username\" then .enabled = $new_enabled else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+            if [[ "$new_enabled" == "true" ]]; then
+                print_success "用户已启用"
+            else
+                print_success "用户已禁用"
+            fi
+            generate_xray_config
+            restart_xray
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            print_error "无效选择"
+            ;;
+    esac
 }
 
 # 订阅管理菜单

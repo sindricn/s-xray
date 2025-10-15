@@ -926,9 +926,50 @@ bind_nodes_to_user_smart() {
         # 判断是序号还是端口
         if [[ "$input" =~ ^[0-9]+$ ]]; then
             # 是数字，判断是序号还是端口
-            port=$(jq -r ".nodes[$((input-1))].port" "$NODES_FILE" 2>/dev/null)
-            if [[ -z "$port" || "$port" == "null" ]]; then
-                # 不是有效序号，当作端口处理
+            # 检查是否为有效序号（必须>=1且在节点总数范围内）
+            local total_nodes=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null)
+
+            if [[ "$input" -ge 1 && "$input" -le "$total_nodes" ]]; then
+                # 可能是序号，尝试获取端口
+                local temp_port=$(jq -r ".nodes[$((input-1))].port" "$NODES_FILE" 2>/dev/null)
+
+                if [[ -n "$temp_port" && "$temp_port" != "null" ]]; then
+                    # 检查这个节点是否在未绑定列表中
+                    local is_unbound=false
+                    for bound_port in "${bound_ports[@]}"; do
+                        if [[ "$bound_port" == "$temp_port" ]]; then
+                            is_unbound=false
+                            break
+                        fi
+                        is_unbound=true
+                    done
+
+                    # 如果bound_ports为空，说明没有已绑定节点，所有都是未绑定
+                    if [[ ${#bound_ports[@]} -eq 0 ]]; then
+                        is_unbound=true
+                    else
+                        # 需要重新检查
+                        is_unbound=true
+                        for bound_port in "${bound_ports[@]}"; do
+                            if [[ "$bound_port" == "$temp_port" ]]; then
+                                is_unbound=false
+                                break
+                            fi
+                        done
+                    fi
+
+                    if [[ "$is_unbound" == "true" ]]; then
+                        port="$temp_port"
+                    else
+                        # 已绑定的节点，不应该用序号访问，当作端口处理
+                        port="$input"
+                    fi
+                else
+                    # 不是有效序号，当作端口处理
+                    port="$input"
+                fi
+            else
+                # 超出序号范围或为0，当作端口处理
                 port="$input"
             fi
         else
@@ -937,8 +978,8 @@ bind_nodes_to_user_smart() {
 
         # 检查节点是否存在
         local node_exists=$(jq -r ".nodes[] | select(.port == \"$port\") | .port" "$NODES_FILE" 2>/dev/null)
-        if [[ -z "$node_exists" ]]; then
-            print_error "节点不存在: $input"
+        if [[ -z "$node_exists" || "$node_exists" == "null" ]]; then
+            print_error "节点不存在: $input (解析为端口: $port)"
             ((fail_count++))
             continue
         fi
@@ -985,44 +1026,99 @@ unbind_nodes_from_user_smart() {
     # 获取用户UUID
     local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
 
+    # Display bound nodes section with details
     echo ""
-    echo -e "${YELLOW}用户 $username 已绑定的节点：${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}用户 ${YELLOW}$username${CYAN} 已绑定的节点：${NC}"
+    echo ""
 
-    local bound_ports=()
+    local bound_nodes=()
+    local node_index=0
+
     while IFS= read -r binding; do
         local port=$(echo "$binding" | jq -r '.port')
         local users=$(echo "$binding" | jq -r '.users[]')
 
         if echo "$users" | grep -q "$uuid"; then
-            echo "  - 端口 $port"
-            bound_ports+=("$port")
+            # 获取节点详细信息
+            local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+            if [[ -n "$node" && "$node" != "null" ]]; then
+                ((node_index++))
+                local protocol=$(echo "$node" | jq -r '.protocol // "unknown"')
+                local transport=$(echo "$node" | jq -r '.transport // "N/A"')
+                local security=$(echo "$node" | jq -r '.security // "N/A"')
+
+                echo -e "  ${CYAN}[$node_index]${NC} 端口 ${YELLOW}$port${NC} ($protocol/$transport/$security)"
+                bound_nodes+=("$port")
+            fi
         fi
     done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
 
-    if [[ ${#bound_ports[@]} -eq 0 ]]; then
-        print_warning "用户未绑定任何节点"
+    if [[ ${#bound_nodes[@]} -eq 0 ]]; then
+        echo -e "  ${YELLOW}暂无${NC}"
+        echo ""
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        print_info "用户未绑定任何节点"
         return 0
     fi
 
     echo ""
-    echo -e "${YELLOW}请输入要移除的端口（单个或多个用空格分隔）${NC}"
-    read -p "端口: " ports
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}请输入要移除的节点序号或端口（单个或多个用空格分隔）${NC}"
+    read -p "输入: " inputs
 
-    if [[ -z "$ports" ]]; then
-        print_error "端口不能为空"
+    if [[ -z "$inputs" ]]; then
+        print_error "输入不能为空"
         return 1
     fi
 
     local success_count=0
-    for port in $ports; do
+    local fail_count=0
+
+    for input in $inputs; do
+        local port=""
+
+        # 判断是序号还是端口
+        if [[ "$input" =~ ^[0-9]+$ ]]; then
+            # 是数字，判断是序号还是端口
+            if [[ "$input" -ge 1 && "$input" -le "${#bound_nodes[@]}" ]]; then
+                # 是有效序号
+                port="${bound_nodes[$((input-1))]}"
+            else
+                # 不是有效序号，当作端口处理
+                port="$input"
+            fi
+        else
+            port="$input"
+        fi
+
+        # 检查该端口是否在已绑定列表中
+        local is_bound=false
+        for bound_port in "${bound_nodes[@]}"; do
+            if [[ "$bound_port" == "$port" ]]; then
+                is_bound=true
+                break
+            fi
+        done
+
+        if [[ "$is_bound" == "false" ]]; then
+            print_error "节点未绑定或不存在: $input (解析为端口: $port)"
+            ((fail_count++))
+            continue
+        fi
+
+        # 解绑操作
         jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
-        print_success "已从端口 $port 解绑"
+        print_success "已从节点 (端口 $port) 解绑"
         ((success_count++))
     done
 
     echo ""
-    print_info "操作完成：成功 $success_count 个"
+    if [[ $success_count -gt 0 || $fail_count -gt 0 ]]; then
+        print_info "操作完成：成功 $success_count 个，失败 $fail_count 个"
+    fi
 
     if [[ $success_count -gt 0 ]]; then
         generate_xray_config
@@ -1065,17 +1161,13 @@ bind_users_to_node_smart() {
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}未绑定用户：${NC}"
-    local user_count=0
+    local unbound_user_index=0
     local has_unbound=false
 
-    # Create associative array for fast lookup (simulate with grep check)
-    declare -A bound_map
-    for uuid in "${bound_uuids[@]}"; do
-        bound_map["$uuid"]=1
-    done
+    # Store unbound users with their usernames for index lookup
+    declare -a unbound_usernames=()
 
     while IFS= read -r user; do
-        ((user_count++))
         local username=$(echo "$user" | jq -r '.username')
         local uuid=$(echo "$user" | jq -r '.id')
         local email=$(echo "$user" | jq -r '.email // "无邮箱"')
@@ -1090,7 +1182,9 @@ bind_users_to_node_smart() {
         done
 
         if [[ "$is_bound" == "false" ]]; then
-            echo -e "  ${CYAN}[$user_count]${NC} ${YELLOW}$username${NC} ($email)"
+            ((unbound_user_index++))
+            echo -e "  ${CYAN}[$unbound_user_index]${NC} ${YELLOW}$username${NC} ($email)"
+            unbound_usernames+=("$username")
             has_unbound=true
         fi
     done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
@@ -1124,11 +1218,11 @@ bind_users_to_node_smart() {
 
         # Detect if input is index or username
         if [[ "$input" =~ ^[0-9]+$ ]]; then
-            # Input is an index
-            local idx=$((input - 1))
-            username=$(jq -r ".users[$idx].username" "$USERS_FILE" 2>/dev/null)
-
-            if [[ -z "$username" || "$username" == "null" ]]; then
+            # Input is a number - check if it's a valid unbound user index
+            if [[ "$input" -ge 1 && "$input" -le "${#unbound_usernames[@]}" ]]; then
+                # Valid index in unbound users list
+                username="${unbound_usernames[$((input-1))]}"
+            else
                 # Not a valid index, treat as username
                 username="$input"
             fi
