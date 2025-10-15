@@ -175,6 +175,11 @@ quick_add_vless_reality() {
     echo ""
 
     # 基础配置
+    read -p "请输入节点名称 [默认: 自动生成]: " node_name
+    if [[ -z "$node_name" ]]; then
+        node_name="Reality-$(date +%m%d%H%M)"
+    fi
+
     read -p "请输入监听端口 [默认: 443]: " port
     port=${port:-443}
 
@@ -419,7 +424,7 @@ quick_add_vless_reality() {
         }')
 
     # 保存节点信息（新架构：只保存节点技术参数）
-    save_node_info "vless" "$port" "tcp" "reality" "$reality_config"
+    save_node_info "vless" "$port" "tcp" "reality" "$reality_config" "$node_name"
 
     # 绑定admin用户到节点
     local admin_info=$(bind_admin_to_node "$port" "vless")
@@ -924,23 +929,23 @@ list_nodes() {
         return 0
     fi
 
-    printf "%-5s %-12s %-8s %-12s %-15s %-20s\n" "序号" "协议" "端口" "传输" "安全" "创建时间"
+    printf "%-5s %-20s %-12s %-8s %-12s %-15s\n" "序号" "节点名称" "协议" "端口" "传输" "安全"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     local index=1
     while IFS= read -r node; do
+        local name=$(echo "$node" | jq -r '.name // "未命名"')
         local protocol=$(echo "$node" | jq -r '.protocol // "unknown"')
         local port=$(echo "$node" | jq -r '.port // "N/A"')
         local transport=$(echo "$node" | jq -r '.transport // "N/A"')
         local security=$(echo "$node" | jq -r '.security // "N/A"')
-        local created=$(echo "$node" | jq -r '.created // "N/A"')
 
-        # 格式化时间显示
-        if [[ "$created" != "N/A" && "$created" != "null" ]]; then
-            created=$(echo "$created" | cut -d'T' -f1)
+        # 截断过长的名称
+        if [[ ${#name} -gt 18 ]]; then
+            name="${name:0:15}..."
         fi
 
-        printf "%-5s %-12s %-8s %-12s %-15s %-20s\n" "$index" "$protocol" "$port" "$transport" "$security" "$created"
+        printf "%-5s %-20s %-12s %-8s %-12s %-15s\n" "$index" "$name" "$protocol" "$port" "$transport" "$security"
         ((index++))
     done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
 
@@ -971,6 +976,7 @@ show_node_detail() {
         return 1
     fi
 
+    local name=$(echo "$node" | jq -r '.name // "未命名"')
     local protocol=$(echo "$node" | jq -r '.protocol')
     local transport=$(echo "$node" | jq -r '.transport')
     local security=$(echo "$node" | jq -r '.security')
@@ -978,6 +984,7 @@ show_node_detail() {
     local created=$(echo "$node" | jq -r '.created')
 
     echo -e "${GREEN}基本信息：${NC}"
+    echo -e "  节点名称: ${YELLOW}$name${NC}"
     echo -e "  端口: ${YELLOW}$port${NC}"
     echo -e "  协议: ${YELLOW}$protocol${NC}"
     echo -e "  传输: ${YELLOW}$transport${NC}"
@@ -1241,14 +1248,21 @@ save_node_info() {
     local transport=$3
     local security=$4      # reality/tls/none
     local extra_config=$5  # JSON格式的额外配置（Reality参数等）
+    local name=$6          # 节点名称（可选，如果为空则自动生成）
+
+    # 如果没有提供name，自动生成
+    if [[ -z "$name" ]]; then
+        name="${protocol}-${port}"
+    fi
 
     local node_data=$(jq -n \
+        --arg name "$name" \
         --arg protocol "$protocol" \
         --arg port "$port" \
         --arg transport "$transport" \
         --arg security "$security" \
         --argjson extra "$extra_config" \
-        '{protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
+        '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
 
     # 读取现有数据
     local current_data=$(cat "$NODES_FILE")

@@ -393,11 +393,15 @@ modify_node_menu() {
         return 1
     fi
 
+    # 获取节点名称
+    local node_name=$(jq -r ".nodes[] | select(.port == \"$port\") | .name // \"未命名节点\"" "$NODES_FILE" 2>/dev/null)
+
     while true; do
         clear
         echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║      修改节点: ${YELLOW}端口 $port${CYAN}            ║${NC}"
+        echo -e "${CYAN}║      修改节点: ${YELLOW}$node_name${CYAN}            ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+        echo -e "${YELLOW}端口: $port${NC}"
         echo ""
         echo -e "${GREEN}1.${NC} 修改基本配置"
         echo -e "${GREEN}2.${NC} 添加绑定用户"
@@ -409,6 +413,8 @@ modify_node_menu() {
         case $choice in
             1)
                 modify_node_config_direct "$port"
+                # 重新获取节点名称（可能被修改）
+                node_name=$(jq -r ".nodes[] | select(.port == \"$port\") | .name // \"未命名节点\"" "$NODES_FILE" 2>/dev/null)
                 ;;
             2)
                 bind_users_to_node_smart "$port"
@@ -528,24 +534,39 @@ modify_node_config_direct() {
 
         echo ""
         echo -e "${CYAN}可修改的项目：${NC}"
-        echo -e "${GREEN}1.${NC} 修改端口"
+        echo -e "${GREEN}1.${NC} 修改节点名称"
+        echo -e "${GREEN}2.${NC} 修改端口"
 
         # Reality节点显示额外选项
         if [[ "$security" == "reality" ]]; then
-            echo -e "${GREEN}2.${NC} 修改伪装域名 (SNI)"
-            echo -e "${GREEN}3.${NC} 重置公私钥对"
+            echo -e "${GREEN}3.${NC} 修改伪装域名 (SNI)"
+            echo -e "${GREEN}4.${NC} 重置公私钥对"
         fi
 
         echo -e "${GREEN}0.${NC} 返回"
         echo ""
 
-        local max_choice=1
-        [[ "$security" == "reality" ]] && max_choice=3
+        local max_choice=2
+        [[ "$security" == "reality" ]] && max_choice=4
 
         read -p "请选择 [0-$max_choice]: " choice
 
         case $choice in
             1)
+                # 修改节点名称
+                echo ""
+                local current_name=$(echo "$node" | jq -r '.name // "未命名"')
+                echo -e "${YELLOW}当前名称: $current_name${NC}"
+                read -p "请输入新的节点名称: " new_name
+                if [[ -n "$new_name" ]]; then
+                    jq ".nodes |= map(if .port == \"$port\" then .name = \"$new_name\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                    print_success "节点名称已修改为: $new_name"
+                    # 重新加载节点信息
+                    node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                fi
+                ;;
+            2)
                 # 修改端口
                 echo ""
                 read -p "请输入新端口: " new_port
@@ -575,7 +596,7 @@ modify_node_config_direct() {
                     port=$new_port  # 更新当前端口变量
                 fi
                 ;;
-            2)
+            3)
                 # 修改伪装域名 (仅Reality节点)
                 if [[ "$security" != "reality" ]]; then
                     print_error "此选项仅适用于 Reality 节点"
@@ -703,7 +724,7 @@ modify_node_config_direct() {
                         ;;
                 esac
                 ;;
-            3)
+            4)
                 # 重置公私钥对 (仅Reality节点)
                 if [[ "$security" != "reality" ]]; then
                     print_error "此选项仅适用于 Reality 节点"

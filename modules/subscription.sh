@@ -291,6 +291,11 @@ generate_share_link_smart() {
     local protocol=$(echo "$node_json" | jq -r '.protocol')
     local security=$(echo "$node_json" | jq -r '.security // "none"')
 
+    # 获取节点名称，构建完整的remark（节点名-用户名）
+    local node_name=$(echo "$node_json" | jq -r '.name // "未命名"')
+    local username=$(jq -r ".users[] | select(.id == \"$user_id\") | .username // \"\"" "$USERS_FILE" 2>/dev/null)
+    local remark="${node_name}-${username}"
+
     # 获取用户密码（Trojan和SS需要）
     local user_password=""
     if [[ "$protocol" == "trojan" || "$protocol" == "shadowsocks" ]]; then
@@ -301,21 +306,21 @@ generate_share_link_smart() {
         vless)
             # 根据security字段判断类型
             if [[ "$security" == "reality" ]]; then
-                generate_vless_reality_link_from_config "$user_id" "$user_email" "$node_json"
+                generate_vless_reality_link_from_config "$user_id" "$remark" "$node_json"
             elif [[ "$security" == "tls" ]]; then
-                generate_vless_tls_link_from_config "$user_id" "$user_email" "$node_json"
+                generate_vless_tls_link_from_config "$user_id" "$remark" "$node_json"
             else
-                generate_vless_plain_link_from_config "$user_id" "$user_email" "$node_json"
+                generate_vless_plain_link_from_config "$user_id" "$remark" "$node_json"
             fi
             ;;
         vmess)
-            generate_vmess_link_from_config "$user_id" "$user_email" "$node_json"
+            generate_vmess_link_from_config "$user_id" "$remark" "$node_json"
             ;;
         trojan)
-            generate_trojan_link_from_config "$user_password" "$user_email" "$node_json"
+            generate_trojan_link_from_config "$user_password" "$remark" "$node_json"
             ;;
         shadowsocks)
-            generate_ss_link_from_config "$user_password" "$user_email" "$node_json"
+            generate_ss_link_from_config "$user_password" "$remark" "$node_json"
             ;;
         *)
             echo ""
