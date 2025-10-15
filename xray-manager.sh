@@ -1162,17 +1162,19 @@ modify_subscription_menu() {
     show_subscription
 
     echo ""
-    read -p "请输入要修改的订阅名称: " sub_name
+    read -p "请输入要修改的订阅名称（不包含扩展名）: " sub_name
 
     if [[ -z "$sub_name" ]]; then
         print_error "订阅名称不能为空"
         return 1
     fi
 
-    # 检查订阅文件是否存在
-    local sub_file="${SUBSCRIPTION_DIR}/${sub_name}"
-    if [[ ! -f "$sub_file" ]]; then
+    # 查找订阅文件的实际路径
+    local sub_file=$(find_subscription_file "$sub_name")
+    if [[ -z "$sub_file" ]]; then
         print_error "订阅不存在: $sub_name"
+        echo ""
+        echo -e "${YELLOW}提示：${NC}请输入订阅基础名称（不包含 .txt、_raw.txt 或 _clash.yaml 等后缀）"
         return 1
     fi
 
@@ -1218,7 +1220,7 @@ modify_subscription_menu() {
             1)
                 # 修改订阅名称
                 echo ""
-                read -p "请输入新的订阅名称: " new_sub_name
+                read -p "请输入新的订阅名称（不包含扩展名）: " new_sub_name
                 if [[ -n "$new_sub_name" ]]; then
                     # 清理名称
                     new_sub_name=$(echo "$new_sub_name" | tr -cd 'a-zA-Z0-9_-')
@@ -1227,11 +1229,26 @@ modify_subscription_menu() {
                         continue
                     fi
 
-                    local new_sub_file="${SUBSCRIPTION_DIR}/${new_sub_name}"
-                    if [[ -f "$new_sub_file" ]]; then
+                    # 检查新名称是否已存在
+                    local check_file=$(find_subscription_file "$new_sub_name")
+                    if [[ -n "$check_file" ]]; then
                         print_error "订阅名称已存在: $new_sub_name"
                         continue
                     fi
+
+                    # 保留原文件的扩展名
+                    local old_basename=$(basename "$sub_file")
+                    local extension=""
+
+                    if [[ "$old_basename" == *"_clash.yaml" ]]; then
+                        extension="_clash.yaml"
+                    elif [[ "$old_basename" == *"_raw.txt" ]]; then
+                        extension="_raw.txt"
+                    elif [[ "$old_basename" == *".txt" ]]; then
+                        extension=".txt"
+                    fi
+
+                    local new_sub_file="${SUBSCRIPTION_DIR}/${new_sub_name}${extension}"
 
                     # 重命名文件
                     mv "$sub_file" "$new_sub_file"
@@ -1426,7 +1443,7 @@ delete_subscription_smart() {
     show_subscription
 
     echo ""
-    echo -e "${YELLOW}请输入要删除的订阅名称（多个用空格分隔）${NC}"
+    echo -e "${YELLOW}请输入要删除的订阅名称（多个用空格分隔，不包含扩展名）${NC}"
     read -p "订阅名称: " sub_names
 
     if [[ -z "$sub_names" ]]; then
@@ -1434,10 +1451,40 @@ delete_subscription_smart() {
         return 1
     fi
 
+    # 确认删除前检查所有订阅是否存在
+    local valid_subs=()
+    local invalid_subs=()
+
+    for sub_name in $sub_names; do
+        local sub_file=$(find_subscription_file "$sub_name")
+        if [[ -n "$sub_file" ]]; then
+            valid_subs+=("$sub_name")
+        else
+            invalid_subs+=("$sub_name")
+        fi
+    done
+
+    # 显示无效的订阅名称
+    if [[ ${#invalid_subs[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "${RED}以下订阅不存在：${NC}"
+        for sub_name in "${invalid_subs[@]}"; do
+            echo "  - $sub_name"
+        done
+    fi
+
+    # 如果没有有效的订阅,直接返回
+    if [[ ${#valid_subs[@]} -eq 0 ]]; then
+        print_error "没有找到有效的订阅"
+        echo ""
+        echo -e "${YELLOW}提示：${NC}请输入订阅基础名称（不包含 .txt、_raw.txt 或 _clash.yaml 等后缀）"
+        return 1
+    fi
+
     # 确认删除
     echo ""
     echo -e "${YELLOW}即将删除以下订阅：${NC}"
-    for sub_name in $sub_names; do
+    for sub_name in "${valid_subs[@]}"; do
         echo "  - $sub_name"
     done
     echo ""
@@ -1451,10 +1498,10 @@ delete_subscription_smart() {
     local success_count=0
     local fail_count=0
 
-    for sub_name in $sub_names; do
-        local sub_file="${SUBSCRIPTION_DIR}/${sub_name}"
+    for sub_name in "${valid_subs[@]}"; do
+        local sub_file=$(find_subscription_file "$sub_name")
 
-        if [[ ! -f "$sub_file" ]]; then
+        if [[ -z "$sub_file" ]]; then
             print_error "订阅不存在: $sub_name"
             ((fail_count++))
             continue

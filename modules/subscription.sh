@@ -10,6 +10,30 @@
 # 订阅元数据文件
 SUBSCRIPTION_META_FILE="${DATA_DIR}/subscription_metadata.json"
 
+# 查找订阅文件的实际路径
+# 参数: 订阅基础名称 (不带后缀)
+# 返回: 实际文件路径，如果不存在返回空
+find_subscription_file() {
+    local sub_name="$1"
+
+    # 尝试所有可能的后缀
+    local possible_files=(
+        "${SUBSCRIPTION_DIR}/${sub_name}.txt"
+        "${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
+        "${SUBSCRIPTION_DIR}/${sub_name}_clash.yaml"
+    )
+
+    for file in "${possible_files[@]}"; do
+        if [[ -f "$file" ]]; then
+            echo "$file"
+            return 0
+        fi
+    done
+
+    # 如果都没找到，返回空
+    return 1
+}
+
 # 初始化订阅元数据文件
 init_subscription_metadata() {
     if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
@@ -878,7 +902,14 @@ show_node_share_link() {
     echo -e "  ${GREEN}2.${NC} 选择其他用户"
     echo ""
     read -p "请选择 [1-2，默认: 1]: " user_choice
-    user_choice=${user_choice:-1}
+
+    # 验证输入：空值默认为1，但0或其他无效值应该报错
+    if [[ -z "$user_choice" ]]; then
+        user_choice=1
+    elif [[ ! "$user_choice" =~ ^[12]$ ]]; then
+        print_error "无效的选择，请输入1或2"
+        return 1
+    fi
 
     local final_uuid=""
     local final_remark=""
@@ -965,7 +996,7 @@ show_node_share_link() {
     echo -e "${GREEN}║      分享链接生成成功                ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${CYAN}节点:${NC} ${protocol}:${port}"
+    echo -e "${CYAN}节点:${NC} ${name} (${protocol}:${port})"
     echo -e "${CYAN}用户:${NC} ${final_remark}"
     echo ""
     echo -e "${CYAN}分享链接:${NC}"
@@ -1001,7 +1032,14 @@ generate_subscription_with_user() {
     echo -e "  ${GREEN}2.${NC} 选择其他用户"
     echo ""
     read -p "请选择 [1-2，默认: 1]: " user_choice
-    user_choice=${user_choice:-1}
+
+    # 验证输入：空值默认为1，但0或其他无效值应该报错
+    if [[ -z "$user_choice" ]]; then
+        user_choice=1
+    elif [[ ! "$user_choice" =~ ^[12]$ ]]; then
+        print_error "无效的选择，请输入1或2"
+        return 1
+    fi
 
     local sub_user_id=""
     local sub_user_email=""
