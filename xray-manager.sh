@@ -1253,6 +1253,10 @@ modify_subscription_menu() {
                     # 重命名文件
                     mv "$sub_file" "$new_sub_file"
 
+                    # 更新订阅数据库中的名称和文件路径
+                    update_subscription_name "$sub_name" "$new_sub_name"
+                    update_subscription_file "$new_sub_name" "$new_sub_file"
+
                     # 更新元数据中的名称
                     local old_metadata=$(get_subscription_metadata "$sub_name")
                     if [[ -n "$old_metadata" && "$old_metadata" != "{}" ]]; then
@@ -1509,6 +1513,9 @@ delete_subscription_smart() {
 
         # 删除订阅文件
         rm -f "$sub_file"
+
+        # 删除订阅数据库记录
+        remove_subscription_info "$sub_name"
 
         # 删除订阅元数据
         delete_subscription_metadata "$sub_name"

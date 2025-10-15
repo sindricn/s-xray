@@ -1555,6 +1555,9 @@ delete_subscription() {
     # 从数据库删除
     remove_subscription_info "$sub_name"
 
+    # 删除订阅元数据
+    delete_subscription_metadata "$sub_name"
+
     print_success "订阅删除成功"
 }
 
@@ -1827,6 +1830,36 @@ remove_subscription_info() {
         jq ".subscriptions = [.subscriptions[] | select(.name != \"$name\")]" "$sub_db" > "${sub_db}.tmp"
         mv "${sub_db}.tmp" "$sub_db"
     fi
+}
+
+# 更新订阅名称
+update_subscription_name() {
+    local old_name=$1
+    local new_name=$2
+    local sub_db="${DATA_DIR}/subscriptions.json"
+
+    if [[ ! -f "$sub_db" ]]; then
+        return 1
+    fi
+
+    # 更新订阅名称,保留其他信息
+    jq ".subscriptions = [.subscriptions[] | if .name == \"$old_name\" then .name = \"$new_name\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"
+    mv "${sub_db}.tmp" "$sub_db"
+}
+
+# 更新订阅文件路径
+update_subscription_file() {
+    local name=$1
+    local new_file=$2
+    local sub_db="${DATA_DIR}/subscriptions.json"
+
+    if [[ ! -f "$sub_db" ]]; then
+        return 1
+    fi
+
+    # 更新文件路径
+    jq ".subscriptions = [.subscriptions[] | if .name == \"$name\" then .file = \"$new_file\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"
+    mv "${sub_db}.tmp" "$sub_db"
 }
 
 # 更新别名（兼容旧函数名）
