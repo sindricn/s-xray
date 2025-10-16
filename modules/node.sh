@@ -1481,3 +1481,142 @@ batch_modify_ports() {
     echo -e "  1. 逐个修改节点端口"
     echo -e "  2. 或删除节点后重新创建"
 }
+
+# 添加 HTTP 入站节点
+add_http_inbound_node() {
+    clear
+    echo -e "${CYAN}====== 添加 HTTP 入站节点 ======${NC}"
+    echo ""
+
+    echo -e "${YELLOW}HTTP 入站说明：${NC}"
+    echo -e "  • 提供 HTTP/HTTPS 代理服务"
+    echo -e "  • 客户端可通过 HTTP 协议连接"
+    echo -e "  • 支持用户名密码认证"
+    echo ""
+
+    # 输入端口
+    read -p "请输入端口 [默认: 3128]: " port
+    port=${port:-3128}
+
+    # 检查端口是否已被占用
+    if check_port_exists "$port"; then
+        print_error "端口 $port 已被占用或已存在，请使用其他端口"
+        return 1
+    fi
+
+    # 是否需要认证
+    echo ""
+    read -p "是否启用用户认证? [y/N]: " enable_auth
+    local accounts_config=""
+    if [[ "$enable_auth" == "y" || "$enable_auth" == "Y" ]]; then
+        read -p "请输入用户名: " username
+        read -p "请输入密码: " password
+        if [[ -n "$username" && -n "$password" ]]; then
+            accounts_config="\"accounts\": [{\"user\": \"$username\", \"pass\": \"$password\"}],"
+        fi
+    fi
+
+    # 生成节点配置
+    local node_config=$(cat <<EOF_NODE
+{
+  "protocol": "http",
+  "port": $port,
+  "settings": {
+    $accounts_config
+    "allowTransparent": false
+  },
+  "tag": "http-inbound-$port"
+}
+EOF_NODE
+)
+
+    # 保存到文件
+    save_node_info "http" "$port" "$node_config"
+
+    # 生成配置并重启
+    generate_xray_config
+    restart_xray
+
+    print_success "HTTP 入站节点添加成功！"
+    echo ""
+    echo -e "${CYAN}节点信息：${NC}"
+    echo -e "  协议: HTTP"
+    echo -e "  端口: $port"
+    [[ -n "$accounts_config" ]] && echo -e "  认证: 已启用"
+    echo ""
+}
+
+# 添加 SOCKS 入站节点
+add_socks_inbound_node() {
+    clear
+    echo -e "${CYAN}====== 添加 SOCKS 入站节点 ======${NC}"
+    echo ""
+
+    echo -e "${YELLOW}SOCKS 入站说明：${NC}"
+    echo -e "  • 提供 SOCKS5/SOCKS4 代理服务"
+    echo -e "  • 客户端可通过 SOCKS 协议连接"
+    echo -e "  • 支持用户名密码认证和 UDP"
+    echo ""
+
+    # 输入端口
+    read -p "请输入端口 [默认: 1080]: " port
+    port=${port:-1080}
+
+    # 检查端口是否已被占用
+    if check_port_exists "$port"; then
+        print_error "端口 $port 已被占用或已存在，请使用其他端口"
+        return 1
+    fi
+
+    # 是否需要认证
+    echo ""
+    read -p "是否启用用户认证? [y/N]: " enable_auth
+    local auth_config="\"auth\": \"noauth\""
+    local accounts_config=""
+    if [[ "$enable_auth" == "y" || "$enable_auth" == "Y" ]]; then
+        read -p "请输入用户名: " username
+        read -p "请输入密码: " password
+        if [[ -n "$username" && -n "$password" ]]; then
+            auth_config="\"auth\": \"password\""
+            accounts_config=",\"accounts\": [{\"user\": \"$username\", \"pass\": \"$password\"}]"
+        fi
+    fi
+
+    # 是否启用UDP
+    echo ""
+    read -p "是否启用 UDP 支持? [Y/n]: " enable_udp
+    local udp_config="true"
+    if [[ "$enable_udp" == "n" || "$enable_udp" == "N" ]]; then
+        udp_config="false"
+    fi
+
+    # 生成节点配置
+    local node_config=$(cat <<EOF_NODE
+{
+  "protocol": "socks",
+  "port": $port,
+  "settings": {
+    $auth_config$accounts_config,
+    "udp": $udp_config
+  },
+  "tag": "socks-inbound-$port"
+}
+EOF_NODE
+)
+
+    # 保存到文件
+    save_node_info "socks" "$port" "$node_config"
+
+    # 生成配置并重启
+    generate_xray_config
+    restart_xray
+
+    print_success "SOCKS 入站节点添加成功！"
+    echo ""
+    echo -e "${CYAN}节点信息：${NC}"
+    echo -e "  协议: SOCKS"
+    echo -e "  端口: $port"
+    echo -e "  UDP: $([[ "$udp_config" == "true" ]] && echo "已启用" || echo "未启用")"
+    [[ -n "$accounts_config" ]] && echo -e "  认证: 已启用"
+    echo ""
+}

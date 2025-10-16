@@ -322,15 +322,19 @@ menu_node_add() {
         echo -e "${GREEN}2.${NC} VMess 节点"
         echo -e "${GREEN}3.${NC} Trojan 节点"
         echo -e "${GREEN}4.${NC} Shadowsocks 节点"
+        echo -e "${GREEN}5.${NC} HTTP 入站节点"
+        echo -e "${GREEN}6.${NC} SOCKS 入站节点"
         echo -e "${GREEN}0.${NC} 返回上级菜单"
         echo ""
-        read -p "请选择协议 [0-4]: " choice
+        read -p "请选择协议 [0-6]: " choice
 
         case $choice in
             1) add_vless_node ;;
             2) add_vmess_node ;;
             3) add_trojan_node ;;
             4) add_shadowsocks_node ;;
+            5) add_http_inbound_node ;;
+            6) add_socks_inbound_node ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac

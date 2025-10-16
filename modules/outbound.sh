@@ -203,122 +203,182 @@ EOF
 }
 
 #================================================================
-# 从节点添加代理出站
+# 应用出站规则到节点
 #================================================================
-add_proxy_outbound_from_node() {
+apply_outbound_to_node() {
     clear
     echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
-    echo -e "${OUTBOUND_CYAN}║      从节点添加代理出站              ║${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}║      应用出站规则                    ║${OUTBOUND_NC}"
     echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
     echo ""
 
-    echo -e "${OUTBOUND_YELLOW}代理出站说明：${OUTBOUND_NC}"
-    echo -e "  • 使用现有节点配置作为出站代理"
-    echo -e "  • 支持 VLESS、VMess、Trojan、Shadowsocks"
-    echo -e "  • 适用于代理链、多级跳转场景"
-    echo ""
-
-    # 检查节点是否存在
-    if [[ ! -f "$NODES_FILE" ]]; then
-        print_error "节点文件不存在，请先添加节点"
+    # 检查是否有出站规则
+    init_outbound_file
+    local outbound_count=$(jq '.outbounds | length' "$OUTBOUND_FILE" 2>/dev/null || echo "0")
+    if [[ "$outbound_count" -eq 0 ]]; then
+        print_error "暂无出站规则，请先添加出站规则"
         return 1
     fi
 
-    local node_count=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "0")
-    if [[ "$node_count" -eq 0 ]]; then
-        print_error "暂无节点，请先添加节点"
-        return 1
-    fi
-
-    # 显示节点列表
-    echo -e "${OUTBOUND_CYAN}现有节点列表：${OUTBOUND_NC}"
+    # 显示出站规则列表
+    echo -e "${OUTBOUND_CYAN}现有出站规则：${OUTBOUND_NC}"
     echo ""
-    printf "${OUTBOUND_CYAN}%-4s %-12s %-8s %-12s %-12s${OUTBOUND_NC}\n" "序号" "协议" "端口" "加密" "传输"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
     local index=1
-    while read -r line; do
-        local protocol=$(echo "$line" | jq -r '.protocol')
-        local port=$(echo "$line" | jq -r '.port')
-        local security=$(echo "$line" | jq -r '.security // "none"')
-        local transport=$(echo "$line" | jq -r '.transport // "tcp"')
-        printf "%-4s %-12s %-8s %-12s %-12s\n" "$index" "$protocol" "$port" "$security" "$transport"
+    while read -r outbound; do
+        local tag=$(echo "$outbound" | jq -r '.tag')
+        local protocol=$(echo "$outbound" | jq -r '.protocol')
+        echo -e "${OUTBOUND_GREEN}[$index]${OUTBOUND_NC} 标签: $tag, 协议: $protocol"
         ((index++))
-    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+    done < <(jq -c '.outbounds[]' "$OUTBOUND_FILE" 2>/dev/null)
 
     echo ""
-    read -p "请选择节点序号: " node_index
-    if [[ ! "$node_index" =~ ^[0-9]+$ ]] || [[ "$node_index" -lt 1 ]] || [[ "$node_index" -gt "$node_count" ]]; then
+    read -p "请选择出站规则序号: " outbound_index
+    if [[ ! "$outbound_index" =~ ^[0-9]+$ ]] || [[ "$outbound_index" -lt 1 ]] || [[ "$outbound_index" -gt "$outbound_count" ]]; then
         print_error "无效的序号"
         return 1
     fi
 
-    # 获取节点配置
-    local node=$(jq ".nodes[$((node_index-1))]" "$NODES_FILE" 2>/dev/null)
-    if [[ -z "$node" || "$node" == "null" ]]; then
-        print_error "节点不存在"
+    local outbound=$(jq ".outbounds[$((outbound_index-1))]" "$OUTBOUND_FILE" 2>/dev/null)
+    local outbound_tag=$(echo "$outbound" | jq -r '.tag')
+
+    # 检查节点文件
+    if [[ ! -f "$NODES_FILE" ]]; then
+        print_error "节点文件不存在"
         return 1
     fi
 
-    local protocol=$(echo "$node" | jq -r '.protocol')
-    local port=$(echo "$node" | jq -r '.port')
-
-    # 输入出站标签
+    # 显示节点列表
     echo ""
-    read -p "请输入出站标签 (例如: proxy-${protocol}-${port}): " tag
-    tag=${tag:-"proxy-${protocol}-${port}"}
+    echo -e "${OUTBOUND_CYAN}现有节点列表：${OUTBOUND_NC}"
+    echo ""
+    printf "${OUTBOUND_CYAN}%-4s %-12s %-8s %-20s${OUTBOUND_NC}\n" "序号" "协议" "端口" "当前出站"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # 检查标签是否已存在
-    if jq -e --arg tag "$tag" '.outbounds[] | select(.tag == $tag)' "$OUTBOUND_FILE" >/dev/null 2>&1; then
-        print_error "标签 '$tag' 已存在"
+    index=1
+    while read -r node; do
+        local protocol=$(echo "$node" | jq -r '.protocol')
+        local port=$(echo "$node" | jq -r '.port')
+        local current_outbound=$(echo "$node" | jq -r '.outbound_tag // "未设置"')
+        printf "%-4s %-12s %-8s %-20s\n" "$index" "$protocol" "$port" "$current_outbound"
+        ((index++))
+    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+
+    echo ""
+    read -p "请输入节点序号（多个用空格分隔）: " node_indices
+
+    if [[ -z "$node_indices" ]]; then
+        print_error "请至少选择一个节点"
         return 1
     fi
 
-    # Mux 配置
+    local success_count=0
+    for node_idx in $node_indices; do
+        if [[ ! "$node_idx" =~ ^[0-9]+$ ]]; then
+            print_warning "跳过无效序号: $node_idx"
+            continue
+        fi
+
+        # 更新节点的出站标签
+        jq "(.nodes[$((node_idx-1))].outbound_tag) = \"$outbound_tag\"" "$NODES_FILE" > "${NODES_FILE}.tmp"
+        if [[ $? -eq 0 ]]; then
+            mv "${NODES_FILE}.tmp" "$NODES_FILE"
+            ((success_count++))
+        else
+            rm -f "${NODES_FILE}.tmp"
+        fi
+    done
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "成功将出站规则 '$outbound_tag' 应用到 $success_count 个节点"
+    else
+        print_error "未能应用出站规则到任何节点"
+    fi
+}
+
+#================================================================
+# 禁用节点的出站规则
+#================================================================
+disable_outbound_from_node() {
+    clear
+    echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}║      禁用出站规则                    ║${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
     echo ""
-    read -p "是否启用 Mux 多路复用? [y/N]: " enable_mux
-    local mux_enabled="false"
-    local mux_concurrency=8
-    if [[ "$enable_mux" == "y" || "$enable_mux" == "Y" ]]; then
-        mux_enabled="true"
-        read -p "Mux 并发数 (1-128, 默认: 8): " input_concurrency
-        mux_concurrency=${input_concurrency:-8}
+
+    # 检查节点文件
+    if [[ ! -f "$NODES_FILE" ]]; then
+        print_error "节点文件不存在"
+        return 1
     fi
 
-    # 构建出站配置
-    local settings=$(echo "$node" | jq '.settings // {}')
-    local stream_settings=$(echo "$node" | jq '{network: .transport, security: .security} + (.extra // {})')
-
-    local outbound_config=$(jq -n \
-        --arg protocol "$protocol" \
-        --arg tag "$tag" \
-        --argjson settings "$settings" \
-        --argjson streamSettings "$stream_settings" \
-        --argjson mux_enabled "$mux_enabled" \
-        --argjson mux_concurrency "$mux_concurrency" \
-        '{
-            protocol: $protocol,
-            tag: $tag,
-            settings: $settings,
-            streamSettings: $streamSettings,
-            mux: {
-                enabled: $mux_enabled,
-                concurrency: $mux_concurrency
-            }
-        }')
-
-    # 添加到文件
-    init_outbound_file
-    jq --argjson outbound "$outbound_config" '.outbounds += [$outbound]' "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
-    mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
-
-    print_success "代理出站添加成功！"
+    # 显示有出站规则的节点
+    echo -e "${OUTBOUND_CYAN}已应用出站规则的节点：${OUTBOUND_NC}"
     echo ""
-    echo -e "${OUTBOUND_CYAN}出站信息：${OUTBOUND_NC}"
-    echo -e "  标签: $tag"
-    echo -e "  协议: $protocol"
-    echo -e "  端口: $port"
-    echo -e "  Mux: $([[ "$mux_enabled" == "true" ]] && echo "已启用 (并发: $mux_concurrency)" || echo "未启用")"
+    printf "${OUTBOUND_CYAN}%-4s %-12s %-8s %-20s${OUTBOUND_NC}\n" "序号" "协议" "端口" "出站规则"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    local index=1
+    local has_outbound=false
+    while read -r node; do
+        local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // ""')
+        if [[ -n "$outbound_tag" ]]; then
+            local protocol=$(echo "$node" | jq -r '.protocol')
+            local port=$(echo "$node" | jq -r '.port')
+            printf "%-4s %-12s %-8s %-20s\n" "$index" "$protocol" "$port" "$outbound_tag"
+            has_outbound=true
+        fi
+        ((index++))
+    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+
+    if [[ "$has_outbound" == "false" ]]; then
+        print_warning "暂无节点应用了出站规则"
+        return 0
+    fi
+
+    echo ""
+    read -p "请输入节点序号（多个用空格分隔，0=全部）: " node_indices
+
+    if [[ -z "$node_indices" ]]; then
+        print_error "请至少选择一个节点"
+        return 1
+    fi
+
+    # 如果选择0，禁用所有节点的出站规则
+    if [[ "$node_indices" == "0" ]]; then
+        jq '(.nodes[].outbound_tag) = null' "$NODES_FILE" > "${NODES_FILE}.tmp"
+        mv "${NODES_FILE}.tmp" "$NODES_FILE"
+        generate_xray_config
+        restart_xray
+        print_success "已禁用所有节点的出站规则"
+        return 0
+    fi
+
+    local success_count=0
+    for node_idx in $node_indices; do
+        if [[ ! "$node_idx" =~ ^[0-9]+$ ]]; then
+            print_warning "跳过无效序号: $node_idx"
+            continue
+        fi
+
+        # 移除节点的出站标签
+        jq "(.nodes[$((node_idx-1))].outbound_tag) = null" "$NODES_FILE" > "${NODES_FILE}.tmp"
+        if [[ $? -eq 0 ]]; then
+            mv "${NODES_FILE}.tmp" "$NODES_FILE"
+            ((success_count++))
+        else
+            rm -f "${NODES_FILE}.tmp"
+        fi
+    done
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "成功禁用 $success_count 个节点的出站规则"
+    else
+        print_error "未能禁用任何节点的出站规则"
+    fi
 }
 
 #================================================================
@@ -603,20 +663,22 @@ outbound_management_menu() {
         echo -e "${OUTBOUND_GREEN}1.${OUTBOUND_NC} 查看出站规则"
         echo -e "${OUTBOUND_GREEN}2.${OUTBOUND_NC} 添加 HTTP 出站"
         echo -e "${OUTBOUND_GREEN}3.${OUTBOUND_NC} 添加 SOCKS 出站"
-        echo -e "${OUTBOUND_GREEN}4.${OUTBOUND_NC} 从节点添加代理出站"
-        echo -e "${OUTBOUND_GREEN}5.${OUTBOUND_NC} 修改出站规则"
-        echo -e "${OUTBOUND_GREEN}6.${OUTBOUND_NC} 删除出站规则"
+        echo -e "${OUTBOUND_GREEN}4.${OUTBOUND_NC} 应用出站规则到节点"
+        echo -e "${OUTBOUND_GREEN}5.${OUTBOUND_NC} 禁用节点的出站规则"
+        echo -e "${OUTBOUND_GREEN}6.${OUTBOUND_NC} 修改出站规则"
+        echo -e "${OUTBOUND_GREEN}7.${OUTBOUND_NC} 删除出站规则"
         echo -e "${OUTBOUND_GREEN}0.${OUTBOUND_NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-6]: " choice
+        read -p "请选择操作 [0-7]: " choice
 
         case $choice in
             1) list_outbounds ;;
             2) add_http_outbound ;;
             3) add_socks_outbound ;;
-            4) add_proxy_outbound_from_node ;;
-            5) modify_outbound ;;
-            6) delete_outbound ;;
+            4) apply_outbound_to_node ;;
+            5) disable_outbound_from_node ;;
+            6) modify_outbound ;;
+            7) delete_outbound ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
