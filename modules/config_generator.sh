@@ -69,6 +69,7 @@ generate_xray_config() {
                         local password=$(echo "$user" | jq -r '.password // ""')
 
                         # 根据协议生成client配置
+                        local client=""
                         case $protocol in
                             vless|vmess)
                                 local flow=""
@@ -77,14 +78,14 @@ generate_xray_config() {
                                 fi
 
                                 if [[ -n "$flow" ]]; then
-                                    local client=$(jq -n \
+                                    client=$(jq -n \
                                         --arg id "$uuid" \
                                         --arg email "$email" \
                                         --argjson level "$level" \
                                         --arg flow "$flow" \
                                         '{id: $id, email: $email, level: $level, flow: $flow}')
                                 else
-                                    local client=$(jq -n \
+                                    client=$(jq -n \
                                         --arg id "$uuid" \
                                         --arg email "$email" \
                                         --argjson level "$level" \
@@ -93,7 +94,7 @@ generate_xray_config() {
                                 ;;
                             trojan)
                                 # Trojan使用password（从用户表读取）
-                                local client=$(jq -n \
+                                client=$(jq -n \
                                     --arg password "$password" \
                                     --arg email "$email" \
                                     --argjson level "$level" \
@@ -101,11 +102,19 @@ generate_xray_config() {
                                 ;;
                             shadowsocks)
                                 # Shadowsocks也使用password
-                                local client=$(jq -n \
+                                client=$(jq -n \
                                     --arg password "$password" \
                                     --arg email "$email" \
                                     --argjson level "$level" \
                                     '{password: $password, email: $email, level: $level}')
+                                ;;
+                            http|socks)
+                                # HTTP/SOCKS使用username和password
+                                local username=$(echo "$user" | jq -r '.username')
+                                client=$(jq -n \
+                                    --arg user "$username" \
+                                    --arg pass "$password" \
+                                    '{user: $user, pass: $pass}')
                                 ;;
                         esac
 
@@ -242,6 +251,61 @@ generate_inbound_config() {
                     sniffing: {
                         enabled: true,
                         destOverride: ["http", "tls", "quic"]
+                    }
+                }')
+            ;;
+
+        shadowsocks)
+            # Shadowsocks需要method参数
+            local method=$(echo "$extra" | jq -r '.method // "aes-256-gcm"')
+            local inbound=$(jq -n \
+                --argjson port "$port" \
+                --arg tag "shadowsocks-$port" \
+                --arg method "$method" \
+                --argjson clients "$clients" \
+                --argjson stream_settings "$stream_settings" \
+                '{
+                    port: $port,
+                    protocol: "shadowsocks",
+                    tag: $tag,
+                    settings: {
+                        method: $method,
+                        clients: $clients,
+                        network: "tcp,udp"
+                    },
+                    streamSettings: $stream_settings
+                }')
+            ;;
+
+        http)
+            local inbound=$(jq -n \
+                --argjson port "$port" \
+                --arg tag "http-$port" \
+                --argjson clients "$clients" \
+                '{
+                    port: $port,
+                    protocol: "http",
+                    tag: $tag,
+                    settings: {
+                        accounts: $clients,
+                        allowTransparent: false
+                    }
+                }')
+            ;;
+
+        socks)
+            local inbound=$(jq -n \
+                --argjson port "$port" \
+                --arg tag "socks-$port" \
+                --argjson clients "$clients" \
+                '{
+                    port: $port,
+                    protocol: "socks",
+                    tag: $tag,
+                    settings: {
+                        auth: "password",
+                        accounts: $clients,
+                        udp: true
                     }
                 }')
             ;;
