@@ -162,14 +162,16 @@ generate_xray_config() {
     # 生成路由规则
     local routing_rules="[]"
 
-    # 为配置了出站的节点生成路由规则
+    # 为每个节点生成路由规则
     while IFS= read -r node; do
         local port=$(echo "$node" | jq -r '.port')
         local protocol=$(echo "$node" | jq -r '.protocol')
         local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
+        local inbound_tag="${protocol}-${port}"
 
-        if [[ -n "$outbound_tag" ]]; then
-            local inbound_tag="${protocol}-${port}"
+        # 如果节点配置了出站规则,使用指定的出站;否则使用直连
+        if [[ -n "$outbound_tag" && "$outbound_tag" != "null" ]]; then
+            # 有出站规则的节点使用指定的代理
             local rule=$(jq -n \
                 --arg inbound_tag "$inbound_tag" \
                 --arg outbound_tag "$outbound_tag" \
@@ -178,11 +180,20 @@ generate_xray_config() {
                     inboundTag: [$inbound_tag],
                     outboundTag: $outbound_tag
                 }')
-            routing_rules=$(echo "$routing_rules" | jq ". += [$rule]")
+        else
+            # 没有出站规则的节点使用直连
+            local rule=$(jq -n \
+                --arg inbound_tag "$inbound_tag" \
+                '{
+                    type: "field",
+                    inboundTag: [$inbound_tag],
+                    outboundTag: "direct"
+                }')
         fi
+        routing_rules=$(echo "$routing_rules" | jq ". += [$rule]")
     done < <(jq -c '.nodes[]' "$nodes_file")
 
-    # 添加默认路由规则（阻止私有IP）
+    # 添加默认路由规则（阻止私有IP,必须放在最后）
     routing_rules=$(echo "$routing_rules" | jq '. += [{
         type: "field",
         ip: ["geoip:private"],
