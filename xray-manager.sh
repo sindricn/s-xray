@@ -1512,13 +1512,23 @@ delete_subscription_smart() {
         fi
 
         # 删除订阅文件
-        rm -f "$sub_file"
+        if ! rm -f "$sub_file"; then
+            print_error "删除订阅文件失败: $sub_name"
+            ((fail_count++))
+            continue
+        fi
 
         # 删除订阅数据库记录
-        remove_subscription_info "$sub_name"
+        if ! remove_subscription_info "$sub_name"; then
+            print_error "删除订阅数据库记录失败: $sub_name"
+            ((fail_count++))
+            continue
+        fi
 
         # 删除订阅元数据
-        delete_subscription_metadata "$sub_name"
+        if ! delete_subscription_metadata "$sub_name"; then
+            print_warning "删除订阅元数据失败: $sub_name (非关键错误)"
+        fi
 
         print_success "已删除订阅: $sub_name"
         ((success_count++))

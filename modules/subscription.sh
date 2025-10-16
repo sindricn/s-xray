@@ -98,11 +98,28 @@ delete_subscription_metadata() {
     local sub_name="$1"
 
     if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
-        return
+        return 0
     fi
 
-    jq ".subscriptions |= map(select(.name != \"$sub_name\"))" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
-    mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
+    # 使用jq删除指定订阅元数据
+    if ! jq ".subscriptions |= map(select(.name != \"$sub_name\"))" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp" 2>/dev/null; then
+        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
+        return 1
+    fi
+
+    # 验证临时文件
+    if [[ ! -f "${SUBSCRIPTION_META_FILE}.tmp" ]] || ! jq empty "${SUBSCRIPTION_META_FILE}.tmp" 2>/dev/null; then
+        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
+        return 1
+    fi
+
+    # 移动临时文件
+    if ! mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"; then
+        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
+        return 1
+    fi
+
+    return 0
 }
 
 # 检查订阅是否过期
@@ -1826,10 +1843,38 @@ remove_subscription_info() {
     local name=$1
     local sub_db="${DATA_DIR}/subscriptions.json"
 
-    if [[ -f "$sub_db" ]]; then
-        jq ".subscriptions = [.subscriptions[] | select(.name != \"$name\")]" "$sub_db" > "${sub_db}.tmp"
-        mv "${sub_db}.tmp" "$sub_db"
+    if [[ ! -f "$sub_db" ]]; then
+        return 0
     fi
+
+    # 使用jq删除指定订阅，添加错误检查
+    if ! jq ".subscriptions = [.subscriptions[] | select(.name != \"$name\")]" "$sub_db" > "${sub_db}.tmp" 2>/dev/null; then
+        print_error "删除订阅记录失败: jq命令执行出错"
+        rm -f "${sub_db}.tmp"
+        return 1
+    fi
+
+    # 验证临时文件是否生成且不为空
+    if [[ ! -f "${sub_db}.tmp" ]]; then
+        print_error "删除订阅记录失败: 临时文件未生成"
+        return 1
+    fi
+
+    # 验证JSON格式是否正确
+    if ! jq empty "${sub_db}.tmp" 2>/dev/null; then
+        print_error "删除订阅记录失败: JSON格式错误"
+        rm -f "${sub_db}.tmp"
+        return 1
+    fi
+
+    # 移动临时文件覆盖原文件
+    if ! mv "${sub_db}.tmp" "$sub_db"; then
+        print_error "删除订阅记录失败: 文件移动失败"
+        rm -f "${sub_db}.tmp"
+        return 1
+    fi
+
+    return 0
 }
 
 # 更新订阅名称
