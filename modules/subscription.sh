@@ -1478,6 +1478,13 @@ show_subscription() {
         return 0
     fi
 
+    # 调试信息：显示数据库文件路径和修改时间
+    if [[ "${DEBUG_MODE:-0}" == "1" ]]; then
+        echo -e "${YELLOW}[调试] 订阅数据库: $sub_db${NC}"
+        echo -e "${YELLOW}[调试] 文件修改时间: $(stat -c '%y' "$sub_db" 2>/dev/null || stat -f '%Sm' "$sub_db" 2>/dev/null)${NC}"
+        echo ""
+    fi
+
     local sub_count=$(jq -r '.subscriptions | length' "$sub_db" 2>/dev/null || echo "0")
     if [[ "$sub_count" -eq 0 ]]; then
         print_warning "暂无订阅"
@@ -1847,11 +1854,26 @@ remove_subscription_info() {
         return 0
     fi
 
+    # 调试：记录删除前的订阅列表
+    local before_count=$(jq '.subscriptions | length' "$sub_db" 2>/dev/null || echo "0")
+
     # 使用jq删除指定订阅，添加错误检查
     if ! jq ".subscriptions = [.subscriptions[] | select(.name != \"$name\")]" "$sub_db" > "${sub_db}.tmp" 2>/dev/null; then
         print_error "删除订阅记录失败: jq命令执行出错"
         rm -f "${sub_db}.tmp"
         return 1
+    fi
+
+    # 调试：记录删除后的订阅列表
+    local after_count=$(jq '.subscriptions | length' "${sub_db}.tmp" 2>/dev/null || echo "0")
+
+    # 如果数量没有变化，说明可能没找到匹配的订阅
+    if [[ "$before_count" == "$after_count" ]]; then
+        print_warning "警告: 订阅 '$name' 在数据库中未找到匹配项"
+        print_info "数据库中的订阅名称列表:"
+        jq -r '.subscriptions[].name' "$sub_db" 2>/dev/null | while read -r sub_name; do
+            echo "  - [$sub_name]"
+        done
     fi
 
     # 验证临时文件是否生成且不为空
