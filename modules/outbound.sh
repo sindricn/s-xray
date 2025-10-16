@@ -128,7 +128,7 @@ add_http_outbound() {
     echo -e "${OUTBOUND_CYAN}出站信息：${OUTBOUND_NC}"
     echo -e "  标签: $tag"
     echo -e "  服务器: $server:$port"
-    [[ -n "$auth_config" ]] && echo -e "  认证: 已启用"
+    [[ -n "$username" ]] && echo -e "  认证: 已启用 (用户: $username)"
 }
 
 #================================================================
@@ -219,7 +219,7 @@ add_socks_outbound() {
     echo -e "${OUTBOUND_CYAN}出站信息：${OUTBOUND_NC}"
     echo -e "  标签: $tag"
     echo -e "  服务器: $server:$port"
-    [[ -n "$auth_config" ]] && echo -e "  认证: 已启用"
+    [[ -n "$username" ]] && echo -e "  认证: 已启用 (用户: $username)"
 }
 
 #================================================================
