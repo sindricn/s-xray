@@ -1443,6 +1443,37 @@ get_sub_type_name() {
     esac
 }
 
+# 同步订阅数据库（清理不存在的文件记录）
+sync_subscription_database() {
+    local sub_db="${DATA_DIR}/subscriptions.json"
+
+    if [[ ! -f "$sub_db" ]]; then
+        return 0
+    fi
+
+    # 获取所有数据库中的订阅
+    local names_to_remove=()
+    while IFS= read -r name; do
+        if [[ -z "$name" ]]; then
+            continue
+        fi
+
+        # 检查订阅文件是否存在
+        local sub_file=$(find_subscription_file "$name" 2>/dev/null)
+        if [[ -z "$sub_file" ]]; then
+            names_to_remove+=("$name")
+        fi
+    done < <(jq -r '.subscriptions[].name' "$sub_db" 2>/dev/null)
+
+    # 批量删除不存在的记录
+    if [[ ${#names_to_remove[@]} -gt 0 ]]; then
+        for name in "${names_to_remove[@]}"; do
+            remove_subscription_info "$name" 2>/dev/null
+            delete_subscription_metadata "$name" 2>/dev/null
+        done
+    fi
+}
+
 # 查看订阅列表
 show_subscription() {
     clear
@@ -1461,6 +1492,9 @@ show_subscription() {
         print_warning "暂无订阅"
         return 0
     fi
+
+    # 同步数据库，清理不存在的文件记录
+    sync_subscription_database
 
     local sub_count=$(jq -r '.subscriptions | length' "$sub_db" 2>/dev/null || echo "0")
     if [[ "$sub_count" -eq 0 ]]; then
