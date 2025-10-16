@@ -218,9 +218,10 @@ menu_core() {
         echo -e "${GREEN}5.${NC} 卸载 Xray"
         echo -e "${GREEN}6.${NC} 更新 Xray"
         echo -e "${GREEN}7.${NC} 查看日志"
+        echo -e "${GREEN}8.${NC} 查看配置"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-7]: " choice
+        read -p "请选择操作 [0-8]: " choice
 
         case $choice in
             1) install_xray ;;
@@ -265,6 +266,27 @@ menu_core() {
                     0) ;;
                     *) print_error "无效选择" ;;
                 esac
+                ;;
+            8)
+                # 查看配置
+                clear
+                echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+                echo -e "${CYAN}║          Xray 配置文件               ║${NC}"
+                echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+                echo ""
+
+                if [[ ! -f "$XRAY_CONFIG" ]]; then
+                    print_error "配置文件不存在: $XRAY_CONFIG"
+                else
+                    echo -e "${YELLOW}配置文件路径: $XRAY_CONFIG${NC}"
+                    echo ""
+                    echo -e "${CYAN}配置内容:${NC}"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    cat "$XRAY_CONFIG" | jq '.' 2>/dev/null || cat "$XRAY_CONFIG"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo ""
+                    echo -e "${GREEN}提示: 可以复制上面的配置用于调试${NC}"
+                fi
                 ;;
             0) break ;;
             *) print_error "无效选择" ;;

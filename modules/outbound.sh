@@ -83,30 +83,36 @@ add_http_outbound() {
     # 是否需要认证
     echo ""
     read -p "是否需要用户名密码认证? [y/N]: " need_auth
-    local auth_config=""
+    local username=""
+    local password=""
     if [[ "$need_auth" == "y" || "$need_auth" == "Y" ]]; then
         read -p "请输入用户名: " username
         read -p "请输入密码: " password
-        if [[ -n "$username" && -n "$password" ]]; then
-            auth_config=",\"user\":\"$username\",\"pass\":\"$password\""
-        fi
     fi
 
-    # 构建出站配置
-    local outbound_config=$(cat <<EOF
-{
-  "protocol": "http",
-  "tag": "$tag",
-  "settings": {
-    "servers": [{
-      "address": "$server",
-      "port": $port
-      $auth_config
-    }]
-  }
-}
-EOF
-)
+    # 构建出站配置 (使用jq确保JSON格式正确)
+    local server_config=$(jq -n \
+        --arg address "$server" \
+        --argjson port "$port" \
+        '{address: $address, port: $port}')
+
+    if [[ -n "$username" && -n "$password" ]]; then
+        server_config=$(echo "$server_config" | jq \
+            --arg user "$username" \
+            --arg pass "$password" \
+            '. + {user: $user, pass: $pass}')
+    fi
+
+    local outbound_config=$(jq -n \
+        --arg tag "$tag" \
+        --argjson server "$server_config" \
+        '{
+            protocol: "http",
+            tag: $tag,
+            settings: {
+                servers: [$server]
+            }
+        }')
 
     # 添加到文件
     init_outbound_file
@@ -164,30 +170,36 @@ add_socks_outbound() {
     # 是否需要认证
     echo ""
     read -p "是否需要用户名密码认证? [y/N]: " need_auth
-    local auth_config=""
+    local username=""
+    local password=""
     if [[ "$need_auth" == "y" || "$need_auth" == "Y" ]]; then
         read -p "请输入用户名: " username
         read -p "请输入密码: " password
-        if [[ -n "$username" && -n "$password" ]]; then
-            auth_config=",\"user\":\"$username\",\"pass\":\"$password\""
-        fi
     fi
 
-    # 构建出站配置
-    local outbound_config=$(cat <<EOF
-{
-  "protocol": "socks",
-  "tag": "$tag",
-  "settings": {
-    "servers": [{
-      "address": "$server",
-      "port": $port
-      $auth_config
-    }]
-  }
-}
-EOF
-)
+    # 构建出站配置 (使用jq确保JSON格式正确)
+    local server_config=$(jq -n \
+        --arg address "$server" \
+        --argjson port "$port" \
+        '{address: $address, port: $port}')
+
+    if [[ -n "$username" && -n "$password" ]]; then
+        server_config=$(echo "$server_config" | jq \
+            --arg user "$username" \
+            --arg pass "$password" \
+            '. + {user: $user, pass: $pass}')
+    fi
+
+    local outbound_config=$(jq -n \
+        --arg tag "$tag" \
+        --argjson server "$server_config" \
+        '{
+            protocol: "socks",
+            tag: $tag,
+            settings: {
+                servers: [$server]
+            }
+        }')
 
     # 添加到文件
     init_outbound_file

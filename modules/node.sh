@@ -1048,6 +1048,20 @@ show_node_detail() {
         echo -e "  ${YELLOW}共 $user_count 个用户${NC}"
     fi
     echo ""
+
+    # 显示节点的Xray配置 (从config.json中提取)
+    if [[ -f "$XRAY_CONFIG" ]]; then
+        local inbound_tag="${protocol}-${port}"
+        local inbound_config=$(jq --arg tag "$inbound_tag" '.inbounds[] | select(.tag == $tag)' "$XRAY_CONFIG" 2>/dev/null)
+
+        if [[ -n "$inbound_config" && "$inbound_config" != "null" ]]; then
+            echo -e "${GREEN}节点Xray配置：${NC}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "$inbound_config" | jq '.'
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+        fi
+    fi
 }
 
 # 修改节点配置（整合了绑定用户功能）
