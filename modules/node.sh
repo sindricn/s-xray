@@ -580,7 +580,7 @@ add_vless_node() {
         }')
 
     # 保存节点信息(只保存技术参数,不包含用户)
-    save_node_info "vless" "$port" "$transport" "$security" "$extra_config"
+    save_node_info "vless" "$port" "$transport" "$security" "$extra_config" "vless-$port"
 
     # 绑定admin用户到节点
     local admin_info=$(bind_admin_to_node "$port" "vless")
@@ -677,7 +677,7 @@ add_vmess_node() {
         }')
 
     # 保存节点信息(只保存技术参数,不包含用户)
-    save_node_info "vmess" "$port" "$transport" "none" "$extra_config"
+    save_node_info "vmess" "$port" "$transport" "none" "$extra_config" "vmess-$port"
 
     # 绑定admin用户到节点
     local admin_info=$(bind_admin_to_node "$port" "vmess")
@@ -767,8 +767,8 @@ add_trojan_node() {
             fallback_port: $fallback_port
         }')
 
-    # 保存节点信息(只保存技术参数,不包含用户密码)
-    save_node_info "trojan" "$port" "tcp" "tls" "$extra_config"
+    # 保存节点信息(只保存技点参数,不包含用户密码)
+    save_node_info "trojan" "$port" "tcp" "tls" "$extra_config" "trojan-$port"
 
     # 绑定admin用户到节点
     local admin_info=$(bind_admin_to_node "$port" "trojan")
@@ -840,7 +840,7 @@ add_shadowsocks_node() {
         }')
 
     # 保存节点信息(只保存技术参数,不包含用户密码)
-    save_node_info "shadowsocks" "$port" "tcp" "none" "$extra_config"
+    save_node_info "shadowsocks" "$port" "tcp" "none" "$extra_config" "shadowsocks-$port"
 
     # 绑定admin用户到节点
     local admin_info=$(bind_admin_to_node "$port" "shadowsocks")
@@ -1504,29 +1504,16 @@ add_http_inbound_node() {
         return 1
     fi
 
-    # 是否需要认证
-    echo ""
-    read -p "是否启用用户认证? [y/N]: " enable_auth
-    local accounts_config=""
-    if [[ "$enable_auth" == "y" || "$enable_auth" == "Y" ]]; then
-        read -p "请输入用户名: " username
-        read -p "请输入密码: " password
-        if [[ -n "$username" && -n "$password" ]]; then
-            accounts_config="\"accounts\": [{\"user\": \"$username\", \"pass\": \"$password\"}],"
-        fi
-    fi
-
-    # 生成额外配置
-    local extra_config=$(cat <<EOF_EXTRA
-{
-  "accounts": $(if [[ -n "$accounts_config" ]]; then echo "[{\"user\": \"$username\", \"pass\": \"$password\"}]"; else echo "[]"; fi),
-  "allowTransparent": false
-}
-EOF_EXTRA
-)
-
-    # 保存到文件
+    # 保存节点基本信息（先不绑定用户）
+    local extra_config='{"allowTransparent": false}'
     save_node_info "http" "$port" "tcp" "none" "$extra_config" "http-$port"
+
+    # 绑定admin用户到节点
+    local admin_info=$(bind_admin_to_node "$port" "http")
+    if [[ $? -ne 0 ]]; then
+        print_error "绑定默认用户失败"
+        return 1
+    fi
 
     # 生成配置并重启
     generate_xray_config
@@ -1537,7 +1524,9 @@ EOF_EXTRA
     echo -e "${CYAN}节点信息：${NC}"
     echo -e "  协议: HTTP"
     echo -e "  端口: $port"
-    [[ -n "$accounts_config" ]] && echo -e "  认证: 已启用"
+    echo -e "  已绑定用户: admin"
+    echo ""
+    print_info "提示：可在【用户管理】中添加更多用户到此节点"
     echo ""
 }
 
@@ -1563,20 +1552,6 @@ add_socks_inbound_node() {
         return 1
     fi
 
-    # 是否需要认证
-    echo ""
-    read -p "是否启用用户认证? [y/N]: " enable_auth
-    local auth_config="\"auth\": \"noauth\""
-    local accounts_config=""
-    if [[ "$enable_auth" == "y" || "$enable_auth" == "Y" ]]; then
-        read -p "请输入用户名: " username
-        read -p "请输入密码: " password
-        if [[ -n "$username" && -n "$password" ]]; then
-            auth_config="\"auth\": \"password\""
-            accounts_config=",\"accounts\": [{\"user\": \"$username\", \"pass\": \"$password\"}]"
-        fi
-    fi
-
     # 是否启用UDP
     echo ""
     read -p "是否启用 UDP 支持? [Y/n]: " enable_udp
@@ -1586,17 +1561,19 @@ add_socks_inbound_node() {
     fi
 
     # 生成额外配置
-    local extra_config=$(cat <<EOF_EXTRA
-{
-  "auth": $(if [[ -n "$accounts_config" ]]; then echo "\"password\""; else echo "\"noauth\""; fi),
-  "accounts": $(if [[ -n "$accounts_config" ]]; then echo "[{\"user\": \"$username\", \"pass\": \"$password\"}]"; else echo "[]"; fi),
-  "udp": $udp_config
-}
-EOF_EXTRA
-)
+    local extra_config=$(jq -n \
+        --argjson udp "$udp_config" \
+        '{udp: $udp}')
 
-    # 保存到文件
+    # 保存节点基本信息（先不绑定用户）
     save_node_info "socks" "$port" "tcp" "none" "$extra_config" "socks-$port"
+
+    # 绑定admin用户到节点
+    local admin_info=$(bind_admin_to_node "$port" "socks")
+    if [[ $? -ne 0 ]]; then
+        print_error "绑定默认用户失败"
+        return 1
+    fi
 
     # 生成配置并重启
     generate_xray_config
@@ -1608,6 +1585,8 @@ EOF_EXTRA
     echo -e "  协议: SOCKS"
     echo -e "  端口: $port"
     echo -e "  UDP: $([[ "$udp_config" == "true" ]] && echo "已启用" || echo "未启用")"
-    [[ -n "$accounts_config" ]] && echo -e "  认证: 已启用"
+    echo -e "  已绑定用户: admin"
+    echo ""
+    print_info "提示：可在【用户管理】中添加更多用户到此节点"
     echo ""
 }
