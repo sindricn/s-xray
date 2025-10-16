@@ -982,6 +982,7 @@ show_node_detail() {
     local security=$(echo "$node" | jq -r '.security')
     local extra=$(echo "$node" | jq -r '.extra')
     local created=$(echo "$node" | jq -r '.created')
+    local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
 
     echo -e "${GREEN}基本信息：${NC}"
     echo -e "  节点名称: ${YELLOW}$name${NC}"
@@ -990,6 +991,13 @@ show_node_detail() {
     echo -e "  传输: ${YELLOW}$transport${NC}"
     echo -e "  安全: ${YELLOW}$security${NC}"
     echo -e "  创建时间: ${YELLOW}${created:0:19}${NC}"
+
+    # 显示出站规则
+    if [[ -n "$outbound_tag" ]]; then
+        echo -e "  出站规则: ${GREEN}$outbound_tag${NC}"
+    else
+        echo -e "  出站规则: ${YELLOW}未设置${NC}"
+    fi
     echo ""
 
     # 显示协议特定配置

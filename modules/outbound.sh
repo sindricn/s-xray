@@ -251,15 +251,22 @@ apply_outbound_to_node() {
     echo ""
     echo -e "${OUTBOUND_CYAN}现有节点列表：${OUTBOUND_NC}"
     echo ""
-    printf "${OUTBOUND_CYAN}%-4s %-12s %-8s %-20s${OUTBOUND_NC}\n" "序号" "协议" "端口" "当前出站"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    printf "${OUTBOUND_CYAN}%-4s %-20s %-12s %-8s %-20s${OUTBOUND_NC}\n" "序号" "节点名称" "协议" "端口" "当前出站"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     index=1
     while read -r node; do
+        local name=$(echo "$node" | jq -r '.name // "未命名"')
         local protocol=$(echo "$node" | jq -r '.protocol')
         local port=$(echo "$node" | jq -r '.port')
         local current_outbound=$(echo "$node" | jq -r '.outbound_tag // "未设置"')
-        printf "%-4s %-12s %-8s %-20s\n" "$index" "$protocol" "$port" "$current_outbound"
+
+        # 截断过长的名称
+        if [[ ${#name} -gt 18 ]]; then
+            name="${name:0:15}..."
+        fi
+
+        printf "%-4s %-20s %-12s %-8s %-20s\n" "$index" "$name" "$protocol" "$port" "$current_outbound"
         ((index++))
     done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
 
@@ -316,17 +323,24 @@ disable_outbound_from_node() {
     # 显示有出站规则的节点
     echo -e "${OUTBOUND_CYAN}已应用出站规则的节点：${OUTBOUND_NC}"
     echo ""
-    printf "${OUTBOUND_CYAN}%-4s %-12s %-8s %-20s${OUTBOUND_NC}\n" "序号" "协议" "端口" "出站规则"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    printf "${OUTBOUND_CYAN}%-4s %-20s %-12s %-8s %-20s${OUTBOUND_NC}\n" "序号" "节点名称" "协议" "端口" "出站规则"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     local index=1
     local has_outbound=false
     while read -r node; do
         local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // ""')
         if [[ -n "$outbound_tag" ]]; then
+            local name=$(echo "$node" | jq -r '.name // "未命名"')
             local protocol=$(echo "$node" | jq -r '.protocol')
             local port=$(echo "$node" | jq -r '.port')
-            printf "%-4s %-12s %-8s %-20s\n" "$index" "$protocol" "$port" "$outbound_tag"
+
+            # 截断过长的名称
+            if [[ ${#name} -gt 18 ]]; then
+                name="${name:0:15}..."
+            fi
+
+            printf "%-4s %-20s %-12s %-8s %-20s\n" "$index" "$name" "$protocol" "$port" "$outbound_tag"
             has_outbound=true
         fi
         ((index++))

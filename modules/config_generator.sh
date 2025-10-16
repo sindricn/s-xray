@@ -137,32 +137,71 @@ generate_xray_config() {
         done < <(jq -c '.nodes[]' "$nodes_file")
     fi
 
+    # 读取用户配置的出站规则
+    local outbounds="[]"
+    local outbounds_file="$DATA_DIR/outbounds.json"
+    if [[ -f "$outbounds_file" ]]; then
+        local user_outbounds=$(jq '.outbounds // []' "$outbounds_file" 2>/dev/null)
+        if [[ -n "$user_outbounds" && "$user_outbounds" != "null" ]]; then
+            outbounds="$user_outbounds"
+        fi
+    fi
+
+    # 添加默认出站
+    outbounds=$(echo "$outbounds" | jq '. += [
+        {
+            protocol: "freedom",
+            tag: "direct"
+        },
+        {
+            protocol: "blackhole",
+            tag: "block"
+        }
+    ]')
+
+    # 生成路由规则
+    local routing_rules="[]"
+
+    # 为配置了出站的节点生成路由规则
+    while IFS= read -r node; do
+        local port=$(echo "$node" | jq -r '.port')
+        local protocol=$(echo "$node" | jq -r '.protocol')
+        local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
+
+        if [[ -n "$outbound_tag" ]]; then
+            local inbound_tag="${protocol}-${port}"
+            local rule=$(jq -n \
+                --arg inbound_tag "$inbound_tag" \
+                --arg outbound_tag "$outbound_tag" \
+                '{
+                    type: "field",
+                    inboundTag: [$inbound_tag],
+                    outboundTag: $outbound_tag
+                }')
+            routing_rules=$(echo "$routing_rules" | jq ". += [$rule]")
+        fi
+    done < <(jq -c '.nodes[]' "$nodes_file")
+
+    # 添加默认路由规则（阻止私有IP）
+    routing_rules=$(echo "$routing_rules" | jq '. += [{
+        type: "field",
+        ip: ["geoip:private"],
+        outboundTag: "block"
+    }]')
+
     # 生成完整配置
     local full_config=$(jq -n \
         --argjson inbounds "$inbounds" \
+        --argjson outbounds "$outbounds" \
+        --argjson routing_rules "$routing_rules" \
         '{
             log: {
                 loglevel: "warning"
             },
             inbounds: $inbounds,
-            outbounds: [
-                {
-                    protocol: "freedom",
-                    tag: "direct"
-                },
-                {
-                    protocol: "blackhole",
-                    tag: "block"
-                }
-            ],
+            outbounds: $outbounds,
             routing: {
-                rules: [
-                    {
-                        type: "field",
-                        ip: ["geoip:private"],
-                        outboundTag: "block"
-                    }
-                ]
+                rules: $routing_rules
             }
         }')
 
