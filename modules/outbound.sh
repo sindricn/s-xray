@@ -96,11 +96,15 @@ add_http_outbound() {
         --argjson port "$port" \
         '{address: $address, port: $port}')
 
+    # 如果需要认证,添加users数组
     if [[ -n "$username" && -n "$password" ]]; then
-        server_config=$(echo "$server_config" | jq \
+        local users_array=$(jq -n \
             --arg user "$username" \
             --arg pass "$password" \
-            '. + {user: $user, pass: $pass}')
+            '[{user: $user, pass: $pass, level: 0}]')
+        server_config=$(echo "$server_config" | jq \
+            --argjson users "$users_array" \
+            '. + {users: $users}')
     fi
 
     local outbound_config=$(jq -n \
@@ -183,11 +187,15 @@ add_socks_outbound() {
         --argjson port "$port" \
         '{address: $address, port: $port}')
 
+    # 如果需要认证,添加users数组
     if [[ -n "$username" && -n "$password" ]]; then
-        server_config=$(echo "$server_config" | jq \
+        local users_array=$(jq -n \
             --arg user "$username" \
             --arg pass "$password" \
-            '. + {user: $user, pass: $pass}')
+            '[{user: $user, pass: $pass, level: 0}]')
+        server_config=$(echo "$server_config" | jq \
+            --argjson users "$users_array" \
+            '. + {users: $users}')
     fi
 
     local outbound_config=$(jq -n \
