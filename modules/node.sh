@@ -1516,22 +1516,17 @@ add_http_inbound_node() {
         fi
     fi
 
-    # 生成节点配置
-    local node_config=$(cat <<EOF_NODE
+    # 生成额外配置
+    local extra_config=$(cat <<EOF_EXTRA
 {
-  "protocol": "http",
-  "port": $port,
-  "settings": {
-    $accounts_config
-    "allowTransparent": false
-  },
-  "tag": "http-inbound-$port"
+  "accounts": $(if [[ -n "$accounts_config" ]]; then echo "[{\"user\": \"$username\", \"pass\": \"$password\"}]"; else echo "[]"; fi),
+  "allowTransparent": false
 }
-EOF_NODE
+EOF_EXTRA
 )
 
     # 保存到文件
-    save_node_info "http" "$port" "$node_config"
+    save_node_info "http" "$port" "tcp" "none" "$extra_config" "http-$port"
 
     # 生成配置并重启
     generate_xray_config
@@ -1590,22 +1585,18 @@ add_socks_inbound_node() {
         udp_config="false"
     fi
 
-    # 生成节点配置
-    local node_config=$(cat <<EOF_NODE
+    # 生成额外配置
+    local extra_config=$(cat <<EOF_EXTRA
 {
-  "protocol": "socks",
-  "port": $port,
-  "settings": {
-    $auth_config$accounts_config,
-    "udp": $udp_config
-  },
-  "tag": "socks-inbound-$port"
+  "auth": $(if [[ -n "$accounts_config" ]]; then echo "\"password\""; else echo "\"noauth\""; fi),
+  "accounts": $(if [[ -n "$accounts_config" ]]; then echo "[{\"user\": \"$username\", \"pass\": \"$password\"}]"; else echo "[]"; fi),
+  "udp": $udp_config
 }
-EOF_NODE
+EOF_EXTRA
 )
 
     # 保存到文件
-    save_node_info "socks" "$port" "$node_config"
+    save_node_info "socks" "$port" "tcp" "none" "$extra_config" "socks-$port"
 
     # 生成配置并重启
     generate_xray_config
