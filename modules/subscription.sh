@@ -101,25 +101,9 @@ delete_subscription_metadata() {
         return 0
     fi
 
-    # 使用jq删除指定订阅元数据
-    if ! jq ".subscriptions |= map(select(.name != \"$sub_name\"))" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp" 2>/dev/null; then
-        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
-        return 1
-    fi
-
-    # 验证临时文件
-    if [[ ! -f "${SUBSCRIPTION_META_FILE}.tmp" ]] || ! jq empty "${SUBSCRIPTION_META_FILE}.tmp" 2>/dev/null; then
-        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
-        return 1
-    fi
-
-    # 移动临时文件
-    if ! mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"; then
-        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
-        return 1
-    fi
-
-    return 0
+    # 使用--arg传递参数，避免特殊字符问题
+    jq --arg name "$sub_name" '.subscriptions |= map(select(.name != $name))' "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp" && \
+    mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
 }
 
 # 检查订阅是否过期
@@ -1478,13 +1462,6 @@ show_subscription() {
         return 0
     fi
 
-    # 调试信息：显示数据库文件路径和修改时间
-    if [[ "${DEBUG_MODE:-0}" == "1" ]]; then
-        echo -e "${YELLOW}[调试] 订阅数据库: $sub_db${NC}"
-        echo -e "${YELLOW}[调试] 文件修改时间: $(stat -c '%y' "$sub_db" 2>/dev/null || stat -f '%Sm' "$sub_db" 2>/dev/null)${NC}"
-        echo ""
-    fi
-
     local sub_count=$(jq -r '.subscriptions | length' "$sub_db" 2>/dev/null || echo "0")
     if [[ "$sub_count" -eq 0 ]]; then
         print_warning "暂无订阅"
@@ -1824,11 +1801,13 @@ save_subscription_info() {
     fi
 
     # 检查是否已存在
-    local exists=$(jq -r ".subscriptions[] | select(.name == \"$name\") | .name" "$sub_db" 2>/dev/null)
+    local exists=$(jq -r --arg name "$name" '.subscriptions[] | select(.name == $name) | .name' "$sub_db" 2>/dev/null)
 
     if [[ -n "$exists" ]]; then
         # 更新现有订阅
-        jq ".subscriptions = [.subscriptions[] | if .name == \"$name\" then {name: \"$name\", url: \"$url\", file: \"$file\", type: \"$type\", user: \"$user\", updated: now|todate} else . end]" "$sub_db" > "${sub_db}.tmp"
+        jq --arg name "$name" --arg url "$url" --arg file "$file" --arg type "$type" --arg user "$user" \
+           '.subscriptions = [.subscriptions[] | if .name == $name then {name: $name, url: $url, file: $file, type: $type, user: $user, updated: now|todate} else . end]' \
+           "$sub_db" > "${sub_db}.tmp"
     else
         # 添加新订阅
         local sub_data=$(jq -n \
@@ -1854,49 +1833,9 @@ remove_subscription_info() {
         return 0
     fi
 
-    # 调试：记录删除前的订阅列表
-    local before_count=$(jq '.subscriptions | length' "$sub_db" 2>/dev/null || echo "0")
-
-    # 使用jq删除指定订阅，添加错误检查
-    if ! jq ".subscriptions = [.subscriptions[] | select(.name != \"$name\")]" "$sub_db" > "${sub_db}.tmp" 2>/dev/null; then
-        print_error "删除订阅记录失败: jq命令执行出错"
-        rm -f "${sub_db}.tmp"
-        return 1
-    fi
-
-    # 调试：记录删除后的订阅列表
-    local after_count=$(jq '.subscriptions | length' "${sub_db}.tmp" 2>/dev/null || echo "0")
-
-    # 如果数量没有变化，说明可能没找到匹配的订阅
-    if [[ "$before_count" == "$after_count" ]]; then
-        print_warning "警告: 订阅 '$name' 在数据库中未找到匹配项"
-        print_info "数据库中的订阅名称列表:"
-        jq -r '.subscriptions[].name' "$sub_db" 2>/dev/null | while read -r sub_name; do
-            echo "  - [$sub_name]"
-        done
-    fi
-
-    # 验证临时文件是否生成且不为空
-    if [[ ! -f "${sub_db}.tmp" ]]; then
-        print_error "删除订阅记录失败: 临时文件未生成"
-        return 1
-    fi
-
-    # 验证JSON格式是否正确
-    if ! jq empty "${sub_db}.tmp" 2>/dev/null; then
-        print_error "删除订阅记录失败: JSON格式错误"
-        rm -f "${sub_db}.tmp"
-        return 1
-    fi
-
-    # 移动临时文件覆盖原文件
-    if ! mv "${sub_db}.tmp" "$sub_db"; then
-        print_error "删除订阅记录失败: 文件移动失败"
-        rm -f "${sub_db}.tmp"
-        return 1
-    fi
-
-    return 0
+    # 使用--arg传递参数，避免特殊字符问题
+    jq --arg name "$name" '.subscriptions = [.subscriptions[] | select(.name != $name)]' "$sub_db" > "${sub_db}.tmp" && \
+    mv "${sub_db}.tmp" "$sub_db"
 }
 
 # 更新订阅名称
