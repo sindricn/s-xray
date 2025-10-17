@@ -7,39 +7,55 @@
 
 # 绑定用户到节点
 bind_user_to_node() {
+    local username="$1"  # 可选参数：如果提供则直接使用，否则交互选择
+
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║      绑定用户到节点                  ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
 
-    # 显示所有用户
-    echo -e "${YELLOW}可用用户列表：${NC}"
-    list_global_users
-
-    echo ""
-    read -p "请输入用户名: " username
+    # 如果没有提供用户名，显示用户列表并选择
     if [[ -z "$username" ]]; then
-        print_error "用户名不能为空"
-        return 1
+        echo -e "${YELLOW}可用用户列表：${NC}"
+        list_global_users
+
+        echo ""
+        read -p "请输入用户名: " username
+        if [[ -z "$username" ]]; then
+            print_error "用户名不能为空"
+            return 1
+        fi
+    else
+        echo -e "${GREEN}用户：${NC}${YELLOW}$username${NC}"
+        echo ""
     fi
 
-    # 获取用户UUID
-    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
-    if [[ -z "$uuid" ]]; then
+    # 获取用户UUID和邮箱
+    local user_info=$(jq -r ".users[] | select(.username == \"$username\")" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$user_info" || "$user_info" == "null" ]]; then
         print_error "用户不存在: $username"
         return 1
     fi
 
+    local uuid=$(echo "$user_info" | jq -r '.id')
+    local email=$(echo "$user_info" | jq -r '.email // .username')
+
     # 显示所有节点
-    echo ""
     echo -e "${YELLOW}可用节点列表：${NC}"
-    list_nodes
+    list_nodes true
 
     echo ""
-    read -p "请输入节点端口: " port
-    if [[ -z "$port" ]]; then
-        print_error "端口不能为空"
+    read -p "请输入节点序号: " node_index
+    if [[ -z "$node_index" ]]; then
+        print_error "节点序号不能为空"
+        return 1
+    fi
+
+    # 根据序号获取端口
+    local port=$(get_node_port_by_index "$node_index")
+    if [[ -z "$port" || "$port" == "null" ]]; then
+        print_error "无效的节点序号: $node_index"
         return 1
     fi
 

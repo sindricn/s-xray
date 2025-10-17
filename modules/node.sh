@@ -915,7 +915,12 @@ delete_node() {
 
 # 查看节点列表
 list_nodes() {
-    clear
+    local no_clear="${1:-false}"  # 可选参数：是否跳过清屏
+
+    if [[ "$no_clear" != "true" ]]; then
+        clear
+    fi
+
     echo -e "${CYAN}====== 节点列表 ======${NC}\n"
 
     if [[ ! -f "$NODES_FILE" ]]; then

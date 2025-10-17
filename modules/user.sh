@@ -220,7 +220,7 @@ add_global_user() {
     # 询问是否绑定到节点
     read -p "是否立即绑定到节点? [y/N]: " bind_now
     if [[ "$bind_now" == "y" || "$bind_now" == "Y" ]]; then
-        bind_user_to_node
+        bind_user_to_node "$username"
     fi
 }
 
@@ -422,20 +422,23 @@ add_user() {
 
     # 显示可用节点
     print_info "当前可用节点："
-    list_nodes
+    list_nodes true
 
-    read -p "请输入要添加用户的节点端口: " port
-    if [[ -z "$port" ]]; then
-        print_error "端口不能为空"
+    read -p "请输入节点序号: " node_index
+    if [[ -z "$node_index" ]]; then
+        print_error "节点序号不能为空"
         return 1
     fi
 
-    # 检查节点是否存在
+    # 根据序号获取端口
+    local port=$(get_node_port_by_index "$node_index")
+    if [[ -z "$port" || "$port" == "null" ]]; then
+        print_error "无效的节点序号: $node_index"
+        return 1
+    fi
+
+    # 获取节点协议
     local node_protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE" 2>/dev/null)
-    if [[ -z "$node_protocol" ]]; then
-        print_error "节点不存在"
-        return 1
-    fi
 
     read -p "请输入用户邮箱/备注: " email
     while [[ -z "$email" ]]; do
