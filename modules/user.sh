@@ -247,6 +247,9 @@ show_user_detail() {
     local level=$(echo "$user" | jq -r '.level // 0')
     local enabled=$(echo "$user" | jq -r '.enabled // true')
     local created=$(echo "$user" | jq -r '.created // "未知"')
+    local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
+    local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
+    local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
 
     local status_text=""
     if [[ "$enabled" == "true" ]]; then
@@ -263,6 +266,11 @@ show_user_detail() {
     echo -e "  等级: ${YELLOW}$level${NC}"
     echo -e "  状态: $status_text"
     echo -e "  创建时间: ${YELLOW}${created:0:19}${NC}"
+    echo ""
+    echo -e "${GREEN}流量与有效期：${NC}"
+    echo -e "  流量限制: ${YELLOW}$traffic_limit GB${NC}"
+    echo -e "  已用流量: ${YELLOW}$traffic_used GB${NC}"
+    echo -e "  有效期至: ${YELLOW}$expire_date${NC}"
     echo ""
 
     # 显示绑定的节点
@@ -568,8 +576,10 @@ modify_user() {
     echo "2. 修改密码"
     echo "3. 重置UUID"
     echo "4. 切换启用/禁用状态"
+    echo "5. 修改流量限制"
+    echo "6. 修改有效期"
     echo "0. 返回"
-    read -p "请选择 [0-4]: " choice
+    read -p "请选择 [0-6]: " choice
 
     case $choice in
         1)
@@ -616,6 +626,61 @@ modify_user() {
             fi
             generate_xray_config
             restart_xray
+            ;;
+        5)
+            echo ""
+            read -p "请输入新的流量限制(GB) [留空表示无限制]: " new_traffic_limit
+            new_traffic_limit=${new_traffic_limit:-unlimited}
+
+            jq ".users |= map(if .username == \"$username\" then .traffic_limit_gb = \"$new_traffic_limit\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
+            print_success "流量限制修改成功: $new_traffic_limit GB"
+            ;;
+        6)
+            echo ""
+            echo "1. 无限期"
+            echo "2. 30天"
+            echo "3. 90天"
+            echo "4. 180天"
+            echo "5. 365天"
+            echo "6. 自定义天数"
+            read -p "请选择 [1-6]: " expire_choice
+
+            local new_expire_date="unlimited"
+            case $expire_choice in
+                1)
+                    new_expire_date="unlimited"
+                    ;;
+                2)
+                    new_expire_date=$(date -d "+30 days" '+%Y-%m-%d' 2>/dev/null || date -v+30d '+%Y-%m-%d')
+                    ;;
+                3)
+                    new_expire_date=$(date -d "+90 days" '+%Y-%m-%d' 2>/dev/null || date -v+90d '+%Y-%m-%d')
+                    ;;
+                4)
+                    new_expire_date=$(date -d "+180 days" '+%Y-%m-%d' 2>/dev/null || date -v+180d '+%Y-%m-%d')
+                    ;;
+                5)
+                    new_expire_date=$(date -d "+365 days" '+%Y-%m-%d' 2>/dev/null || date -v+365d '+%Y-%m-%d')
+                    ;;
+                6)
+                    read -p "请输入天数: " custom_days
+                    if [[ "$custom_days" =~ ^[0-9]+$ ]] && [[ $custom_days -gt 0 ]]; then
+                        new_expire_date=$(date -d "+${custom_days} days" '+%Y-%m-%d' 2>/dev/null || date -v+${custom_days}d '+%Y-%m-%d')
+                    else
+                        print_warning "无效的天数，使用无限期"
+                        new_expire_date="unlimited"
+                    fi
+                    ;;
+                *)
+                    print_error "无效选择"
+                    return 1
+                    ;;
+            esac
+
+            jq ".users |= map(if .username == \"$username\" then .expire_date = \"$new_expire_date\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
+            print_success "有效期修改成功: $new_expire_date"
             ;;
         0)
             return 0

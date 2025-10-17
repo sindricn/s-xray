@@ -1119,6 +1119,25 @@ generate_subscription_with_user() {
     echo -e "${CYAN}订阅用户:${NC} ${YELLOW}$sub_user_email${NC}"
     echo ""
 
+    # 选择订阅类型（必须先选择类型，才能检查是否已存在）
+    echo -e "${CYAN}选择订阅类型：${NC}"
+    echo -e "  ${GREEN}1.${NC} 通用订阅（Base64编码，支持V2Ray/Qv2ray等）"
+    echo -e "  ${GREEN}2.${NC} 原始订阅（纯文本，支持所有客户端）"
+    echo -e "  ${GREEN}3.${NC} Clash订阅（YAML格式，支持Clash系列）"
+    echo ""
+    read -p "请选择 [1-3，默认: 1]: " sub_type_choice
+    sub_type_choice=${sub_type_choice:-1}
+
+    # 转换订阅类型为字符串标识
+    case $sub_type_choice in
+        1) sub_type="general" ;;
+        2) sub_type="raw" ;;
+        3) sub_type="clash" ;;
+        *) sub_type="general" ;;
+    esac
+
+    echo ""
+
     # 检查该用户是否已有同类型订阅
     local existing_sub=""
     if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
@@ -1152,16 +1171,6 @@ generate_subscription_with_user() {
     if [[ -z "$sub_name" ]]; then
         sub_name="subscription-$(date +%s)"
     fi
-
-    # 选择订阅类型
-    echo ""
-    echo -e "${CYAN}选择订阅类型：${NC}"
-    echo -e "  ${GREEN}1.${NC} 通用订阅（Base64编码，支持V2Ray/Qv2ray等）"
-    echo -e "  ${GREEN}2.${NC} 原始订阅（纯文本，支持所有客户端）"
-    echo -e "  ${GREEN}3.${NC} Clash订阅（YAML格式，支持Clash系列）"
-    echo ""
-    read -p "请选择 [1-3，默认: 1]: " sub_type
-    sub_type=${sub_type:-1}
 
     # 从用户信息读取有效期和流量限制
     echo ""
@@ -1257,18 +1266,18 @@ generate_subscription_with_user() {
     local sub_file=""
 
     case $sub_type in
-        1)
+        general)
             # 通用订阅 - Base64编码（每行一个链接，然后整体编码）
             local raw_links=$(printf "%s\n" "${share_links[@]}")
             sub_content=$(echo -n "$raw_links" | base64_encode)
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}.txt"
             ;;
-        2)
+        raw)
             # 原始订阅（纯文本，每行一个链接）
             sub_content=$(printf "%s\n" "${share_links[@]}")
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
             ;;
-        3)
+        clash)
             # Clash订阅 - YAML格式
             # 收集用户绑定的节点JSON数组
             local nodes_json_array="[]"
@@ -1365,19 +1374,19 @@ generate_subscription_with_user() {
 
     # 显示支持的客户端
     case $sub_type in
-        1)
+        general)
             echo -e "${CYAN}支持的客户端：${NC}"
             echo -e "  • V2RayN/V2RayNG"
             echo -e "  • Shadowrocket"
             echo -e "  • Quantumult X"
             echo -e "  • SagerNet"
             ;;
-        2)
+        raw)
             echo -e "${CYAN}支持的客户端：${NC}"
             echo -e "  • 所有支持订阅的客户端"
             echo -e "  • 可手动复制链接导入"
             ;;
-        3)
+        clash)
             echo -e "${CYAN}支持的客户端（推荐）：${NC}"
             echo -e "  • Clash Verge (推荐) - 跨平台"
             echo -e "  • Clash Verge Rev - 社区维护版"
