@@ -42,12 +42,14 @@ init_subscription_metadata() {
 }
 
 # 保存订阅元数据
-# 参数: sub_name, expire_date, traffic_limit_gb, traffic_used_gb
+# 参数: sub_name, expire_date, traffic_limit_gb, traffic_used_gb, user_id
 save_subscription_metadata() {
     local sub_name="$1"
     local expire_date="$2"        # 格式: YYYY-MM-DD 或 "unlimited"
     local traffic_limit_gb="$3"   # 流量限制(GB) 或 "unlimited"
     local traffic_used_gb="${4:-0}"  # 已使用流量(GB)，默认0
+    local user_id="${5:-}"        # 用户ID
+    local sub_type="${6:-}"       # 订阅类型
 
     init_subscription_metadata
 
@@ -56,16 +58,18 @@ save_subscription_metadata() {
         --arg expire "$expire_date" \
         --arg limit "$traffic_limit_gb" \
         --arg used "$traffic_used_gb" \
+        --arg user_id "$user_id" \
+        --arg type "$sub_type" \
         --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
         --arg updated "$(date '+%Y-%m-%d %H:%M:%S')" \
-        '{name: $name, expire_date: $expire, traffic_limit_gb: $limit, traffic_used_gb: $used, created: $created, updated: $updated}')
+        '{name: $name, expire_date: $expire, traffic_limit_gb: $limit, traffic_used_gb: $used, user_id: $user_id, type: $type, created: $created, updated: $updated}')
 
     # 检查订阅是否已存在
     local existing=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
 
     if [[ -n "$existing" ]]; then
         # 更新现有元数据
-        jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {expire_date: \"$expire_date\", traffic_limit_gb: \"$traffic_limit_gb\", traffic_used_gb: \"$traffic_used_gb\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
+        jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {expire_date: \"$expire_date\", traffic_limit_gb: \"$traffic_limit_gb\", traffic_used_gb: \"$traffic_used_gb\", type: \"$sub_type\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
             "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
     else
         # 添加新元数据
@@ -1115,9 +1119,30 @@ generate_subscription_with_user() {
     echo -e "${CYAN}订阅用户:${NC} ${YELLOW}$sub_user_email${NC}"
     echo ""
 
-    # 订阅名称
-    read -p "请输入订阅名称 [默认: ${sub_user_email}-sub]: " sub_name
-    sub_name=${sub_name:-${sub_user_email}-sub}
+    # 检查该用户是否已有同类型订阅
+    local existing_sub=""
+    if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
+        existing_sub=$(jq -r ".subscriptions[] | select(.user_id == \"$sub_user_id\" and .type == \"$sub_type\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null | head -1)
+    fi
+
+    if [[ -n "$existing_sub" ]]; then
+        echo -e "${YELLOW}注意：用户 $sub_user_email 已有 $sub_type 类型订阅：${existing_sub}${NC}"
+        echo ""
+        read -p "是否更新现有订阅？[Y/n]: " update_existing
+
+        if [[ "$update_existing" == "n" || "$update_existing" == "N" ]]; then
+            print_info "取消生成订阅"
+            return 0
+        fi
+
+        # 使用现有订阅名称
+        sub_name="$existing_sub"
+        print_info "将更新现有订阅: $sub_name"
+    else
+        # 订阅名称
+        read -p "请输入订阅名称 [默认: ${sub_user_email}-${sub_type}-sub]: " sub_name
+        sub_name=${sub_name:-${sub_user_email}-${sub_type}-sub}
+    fi
 
     # 清理订阅名称中的特殊字符和中文，避免乱码
     # 只保留字母、数字、连字符和下划线
@@ -1138,91 +1163,26 @@ generate_subscription_with_user() {
     read -p "请选择 [1-3，默认: 1]: " sub_type
     sub_type=${sub_type:-1}
 
-    # 订阅有效期设置
+    # 从用户信息读取有效期和流量限制
     echo ""
-    echo -e "${CYAN}订阅有效期设置：${NC}"
-    echo -e "  ${GREEN}1.${NC} 无限期"
-    echo -e "  ${GREEN}2.${NC} 1个月"
-    echo -e "  ${GREEN}3.${NC} 3个月"
-    echo -e "  ${GREEN}4.${NC} 6个月"
-    echo -e "  ${GREEN}5.${NC} 1年"
-    echo -e "  ${GREEN}6.${NC} 自定义（天数）"
-    echo ""
-    read -p "请选择 [1-6，默认: 1]: " expire_choice
-    expire_choice=${expire_choice:-1}
+    print_info "从用户配置读取流量和有效期设置..."
 
-    local expire_date="unlimited"
-    case $expire_choice in
-        1)
-            expire_date="unlimited"
-            ;;
-        2)
-            expire_date=$(date -d "+1 month" +%Y-%m-%d 2>/dev/null || date -v+1m +%Y-%m-%d 2>/dev/null)
-            ;;
-        3)
-            expire_date=$(date -d "+3 months" +%Y-%m-%d 2>/dev/null || date -v+3m +%Y-%m-%d 2>/dev/null)
-            ;;
-        4)
-            expire_date=$(date -d "+6 months" +%Y-%m-%d 2>/dev/null || date -v+6m +%Y-%m-%d 2>/dev/null)
-            ;;
-        5)
-            expire_date=$(date -d "+1 year" +%Y-%m-%d 2>/dev/null || date -v+1y +%Y-%m-%d 2>/dev/null)
-            ;;
-        6)
-            read -p "请输入天数: " custom_days
-            if [[ "$custom_days" =~ ^[0-9]+$ ]] && [[ $custom_days -gt 0 ]]; then
-                expire_date=$(date -d "+${custom_days} days" +%Y-%m-%d 2>/dev/null || date -v+${custom_days}d +%Y-%m-%d 2>/dev/null)
-            else
-                print_warning "无效的天数，使用无限期"
-                expire_date="unlimited"
-            fi
-            ;;
-    esac
+    local user_info=$(jq -r ".users[] | select(.id == \"$sub_user_id\")" "$USERS_FILE" 2>/dev/null)
 
-    # 流量限制设置
-    echo ""
-    echo -e "${CYAN}流量限制设置：${NC}"
-    echo -e "  ${GREEN}1.${NC} 无限流量"
-    echo -e "  ${GREEN}2.${NC} 10GB"
-    echo -e "  ${GREEN}3.${NC} 50GB"
-    echo -e "  ${GREEN}4.${NC} 100GB"
-    echo -e "  ${GREEN}5.${NC} 500GB"
-    echo -e "  ${GREEN}6.${NC} 1TB (1024GB)"
-    echo -e "  ${GREEN}7.${NC} 自定义（GB）"
-    echo ""
-    read -p "请选择 [1-7，默认: 1]: " traffic_choice
-    traffic_choice=${traffic_choice:-1}
+    if [[ -z "$user_info" || "$user_info" == "null" ]]; then
+        print_error "无法找到用户信息"
+        return 1
+    fi
 
-    local traffic_limit="unlimited"
-    case $traffic_choice in
-        1)
-            traffic_limit="unlimited"
-            ;;
-        2)
-            traffic_limit="10"
-            ;;
-        3)
-            traffic_limit="50"
-            ;;
-        4)
-            traffic_limit="100"
-            ;;
-        5)
-            traffic_limit="500"
-            ;;
-        6)
-            traffic_limit="1024"
-            ;;
-        7)
-            read -p "请输入流量限制（GB）: " custom_traffic
-            if [[ "$custom_traffic" =~ ^[0-9]+(\.[0-9]+)?$ ]] && (( $(echo "$custom_traffic > 0" | bc -l 2>/dev/null || echo "0") )); then
-                traffic_limit="$custom_traffic"
-            else
-                print_warning "无效的流量值，使用无限流量"
-                traffic_limit="unlimited"
-            fi
-            ;;
-    esac
+    local expire_date=$(echo "$user_info" | jq -r '.expire_date // "unlimited"')
+    local traffic_limit=$(echo "$user_info" | jq -r '.traffic_limit_gb // "unlimited"')
+    local traffic_used=$(echo "$user_info" | jq -r '.traffic_used_gb // "0"')
+
+    echo -e "${CYAN}用户配置：${NC}"
+    echo -e "  有效期: ${YELLOW}$expire_date${NC}"
+    echo -e "  流量限制: ${YELLOW}$traffic_limit GB${NC}"
+    echo -e "  已用流量: ${YELLOW}$traffic_used GB${NC}"
+    echo ""
 
     # 收集所有分享链接（新架构：只生成用户绑定的节点）
     print_info "正在生成分享链接..."
@@ -1367,7 +1327,7 @@ generate_subscription_with_user() {
     save_subscription_info "$sub_name" "$sub_url" "$sub_file" "$sub_type" "$sub_user_email"
 
     # 保存订阅元数据（有效期和流量限制）
-    save_subscription_metadata "$sub_name" "$expire_date" "$traffic_limit" "0"
+    save_subscription_metadata "$sub_name" "$expire_date" "$traffic_limit" "$traffic_used" "$sub_user_id" "$sub_type"
 
     # 启动订阅服务
     setup_subscription_server "$sub_port"

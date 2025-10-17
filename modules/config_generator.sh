@@ -213,6 +213,25 @@ generate_xray_config() {
             outbounds: $outbounds,
             routing: {
                 rules: $routing_rules
+            },
+            stats: {},
+            policy: {
+                levels: {
+                    "0": {
+                        statsUserUplink: true,
+                        statsUserDownlink: true
+                    }
+                },
+                system: {
+                    statsInboundUplink: true,
+                    statsInboundDownlink: true,
+                    statsOutboundUplink: true,
+                    statsOutboundDownlink: true
+                }
+            },
+            api: {
+                tag: "api",
+                services: ["StatsService"]
             }
         }')
 

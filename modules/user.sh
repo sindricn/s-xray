@@ -67,7 +67,7 @@ init_admin_user() {
         --arg username "admin" \
         --arg password "$admin_password" \
         --arg email "$admin_email" \
-        '{id: $id, username: $username, password: $password, email: $email, level: 0, created: (now|todate), enabled: true}')
+        '{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: (now|todate), enabled: true}')
 
     jq ".users += [$admin_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
@@ -174,6 +174,18 @@ add_global_user() {
     read -p "请输入用户等级 [默认: 0]: " level
     level=${level:-0}
 
+    # 设置流量限制
+    read -p "请输入流量限制(GB) [留空表示无限制]: " traffic_limit_gb
+    traffic_limit_gb=${traffic_limit_gb:-unlimited}
+
+    # 设置有效期
+    read -p "请输入有效期(天数) [留空表示无限制]: " expire_days
+    if [[ -n "$expire_days" && "$expire_days" != "unlimited" ]]; then
+        expire_date=$(date -d "+${expire_days} days" '+%Y-%m-%d' 2>/dev/null || date -v+${expire_days}d '+%Y-%m-%d')
+    else
+        expire_date="unlimited"
+    fi
+
     # 保存到全局用户文件
     if [[ ! -f "$USERS_FILE" ]]; then
         echo '{"users":[]}' > "$USERS_FILE"
@@ -185,7 +197,10 @@ add_global_user() {
         --arg password "$password" \
         --arg email "$email" \
         --argjson level "$level" \
-        '{id: $id, username: $username, password: $password, email: $email, level: $level, created: (now|todate), enabled: true}')
+        --arg traffic_limit "$traffic_limit_gb" \
+        --arg traffic_used "0" \
+        --arg expire "$expire_date" \
+        '{id: $id, username: $username, password: $password, email: $email, level: $level, traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
 
     jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
@@ -198,6 +213,8 @@ add_global_user() {
     echo -e "  UUID: ${YELLOW}$uuid${NC}"
     echo -e "  邮箱: ${YELLOW}$email${NC}"
     echo -e "  等级: ${YELLOW}$level${NC}"
+    echo -e "  流量限制: ${YELLOW}$traffic_limit_gb GB${NC}"
+    echo -e "  有效期: ${YELLOW}$expire_date${NC}"
     echo ""
 
     # 询问是否绑定到节点
