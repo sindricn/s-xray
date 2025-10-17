@@ -263,11 +263,11 @@ generate_inbound_config() {
             ;;
 
         vmess)
-            local vmess_clients=$(echo "$clients" | jq 'map(. + {alterId: 0})')
+            # VMess配置: alterId已废弃,不再添加
             local inbound=$(jq -n \
                 --argjson port "$port" \
                 --arg tag "vmess-$port" \
-                --argjson clients "$vmess_clients" \
+                --argjson clients "$clients" \
                 --argjson stream_settings "$stream_settings" \
                 '{
                     port: $port,
@@ -306,25 +306,52 @@ generate_inbound_config() {
             ;;
 
         shadowsocks)
-            # Shadowsocks需要method参数
+            # Shadowsocks配置: 需要method和password作为默认值
             local method=$(echo "$extra" | jq -r '.method // "aes-256-gcm"')
-            local inbound=$(jq -n \
-                --argjson port "$port" \
-                --arg tag "shadowsocks-$port" \
-                --arg method "$method" \
-                --argjson clients "$clients" \
-                --argjson stream_settings "$stream_settings" \
-                '{
-                    port: $port,
-                    protocol: "shadowsocks",
-                    tag: $tag,
-                    settings: {
-                        method: $method,
-                        clients: $clients,
-                        network: "tcp,udp"
-                    },
-                    streamSettings: $stream_settings
-                }')
+
+            # 如果有clients,使用多用户模式;否则使用单用户模式
+            local has_clients=$(echo "$clients" | jq 'length > 0')
+
+            if [[ "$has_clients" == "true" ]]; then
+                # 多用户模式: 使用clients数组
+                local inbound=$(jq -n \
+                    --argjson port "$port" \
+                    --arg tag "shadowsocks-$port" \
+                    --arg method "$method" \
+                    --argjson clients "$clients" \
+                    --argjson stream_settings "$stream_settings" \
+                    '{
+                        port: $port,
+                        protocol: "shadowsocks",
+                        tag: $tag,
+                        settings: {
+                            network: "tcp,udp",
+                            method: $method,
+                            clients: $clients
+                        },
+                        streamSettings: $stream_settings
+                    }')
+            else
+                # 单用户模式: 需要password字段(从第一个client提取)
+                local password=$(echo "$clients" | jq -r '.[0].password // "default-password"')
+                local inbound=$(jq -n \
+                    --argjson port "$port" \
+                    --arg tag "shadowsocks-$port" \
+                    --arg method "$method" \
+                    --arg password "$password" \
+                    --argjson stream_settings "$stream_settings" \
+                    '{
+                        port: $port,
+                        protocol: "shadowsocks",
+                        tag: $tag,
+                        settings: {
+                            network: "tcp,udp",
+                            method: $method,
+                            password: $password
+                        },
+                        streamSettings: $stream_settings
+                    }')
+            fi
             ;;
 
         http)

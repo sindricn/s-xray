@@ -227,6 +227,394 @@ add_socks_outbound() {
 }
 
 #================================================================
+# 添加 VLESS 出站
+#================================================================
+add_vless_outbound() {
+    clear
+    echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}║      添加 VLESS 出站                 ║${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
+    echo ""
+
+    echo -e "${OUTBOUND_YELLOW}VLESS 出站说明：${OUTBOUND_NC}"
+    echo -e "  • 无状态轻量传输协议"
+    echo -e "  • 支持 XTLS Vision 流控"
+    echo -e "  • 需要配合 TLS/Reality 使用"
+    echo ""
+
+    # 输入标签
+    read -p "请输入出站标签 (例如: vless-proxy): " tag
+    if [[ -z "$tag" ]]; then
+        print_error "标签不能为空"
+        return 1
+    fi
+
+    # 检查标签是否已存在
+    if jq -e --arg tag "$tag" '.outbounds[] | select(.tag == $tag)' "$OUTBOUND_FILE" >/dev/null 2>&1; then
+        print_error "标签 '$tag' 已存在"
+        return 1
+    fi
+
+    # 服务器地址和端口
+    echo ""
+    read -p "请输入服务器地址: " server
+    if [[ -z "$server" ]]; then
+        print_error "服务器地址不能为空"
+        return 1
+    fi
+
+    read -p "请输入端口 (默认: 443): " port
+    port=${port:-443}
+
+    # UUID
+    read -p "请输入用户UUID: " uuid
+    if [[ -z "$uuid" ]]; then
+        print_error "UUID不能为空"
+        return 1
+    fi
+
+    # Flow (可选)
+    echo ""
+    echo -e "${OUTBOUND_YELLOW}流控模式 (可选):${OUTBOUND_NC}"
+    echo -e "  1. 无流控 (适用于 ws/grpc 等传输)"
+    echo -e "  2. xtls-rprx-vision (推荐，配合 Reality/TLS)"
+    read -p "请选择 [1-2，默认1]: " flow_choice
+
+    local flow=""
+    case $flow_choice in
+        2) flow="xtls-rprx-vision" ;;
+        *) flow="" ;;
+    esac
+
+    # 构建 user 配置
+    local user_config=$(jq -n \
+        --arg id "$uuid" \
+        --argjson level 0 \
+        '{id: $id, encryption: "none", level: $level}')
+
+    if [[ -n "$flow" ]]; then
+        user_config=$(echo "$user_config" | jq --arg flow "$flow" '. + {flow: $flow}')
+    fi
+
+    # 构建完整出站配置
+    local outbound_config=$(jq -n \
+        --arg tag "$tag" \
+        --arg address "$server" \
+        --argjson port "$port" \
+        --argjson user "$user_config" \
+        '{
+            protocol: "vless",
+            tag: $tag,
+            settings: {
+                vnext: [{
+                    address: $address,
+                    port: $port,
+                    users: [$user]
+                }]
+            }
+        }')
+
+    # 添加到文件
+    init_outbound_file
+    jq --argjson outbound "$outbound_config" '.outbounds += [$outbound]' "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
+    mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
+
+    print_success "VLESS 出站添加成功！"
+    echo ""
+    echo -e "${OUTBOUND_CYAN}出站信息：${OUTBOUND_NC}"
+    echo -e "  标签: $tag"
+    echo -e "  服务器: $server:$port"
+    echo -e "  UUID: ${uuid:0:8}...${uuid: -8}"
+    [[ -n "$flow" ]] && echo -e "  流控: $flow"
+}
+
+#================================================================
+# 添加 VMess 出站
+#================================================================
+add_vmess_outbound() {
+    clear
+    echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}║      添加 VMess 出站                 ║${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
+    echo ""
+
+    echo -e "${OUTBOUND_YELLOW}VMess 出站说明：${OUTBOUND_NC}"
+    echo -e "  • 加密传输协议"
+    echo -e "  • 依赖系统时间同步"
+    echo -e "  • 支持多种加密方式"
+    echo ""
+
+    # 输入标签
+    read -p "请输入出站标签 (例如: vmess-proxy): " tag
+    if [[ -z "$tag" ]]; then
+        print_error "标签不能为空"
+        return 1
+    fi
+
+    # 检查标签是否已存在
+    if jq -e --arg tag "$tag" '.outbounds[] | select(.tag == $tag)' "$OUTBOUND_FILE" >/dev/null 2>&1; then
+        print_error "标签 '$tag' 已存在"
+        return 1
+    fi
+
+    # 服务器地址和端口
+    echo ""
+    read -p "请输入服务器地址: " server
+    if [[ -z "$server" ]]; then
+        print_error "服务器地址不能为空"
+        return 1
+    fi
+
+    read -p "请输入端口 (默认: 443): " port
+    port=${port:-443}
+
+    # UUID
+    read -p "请输入用户UUID: " uuid
+    if [[ -z "$uuid" ]]; then
+        print_error "UUID不能为空"
+        return 1
+    fi
+
+    # 加密方式
+    echo ""
+    echo -e "${OUTBOUND_YELLOW}加密方式:${OUTBOUND_NC}"
+    echo -e "  1. auto (自动选择，推荐)"
+    echo -e "  2. aes-128-gcm"
+    echo -e "  3. chacha20-poly1305"
+    echo -e "  4. none (不加密)"
+    read -p "请选择 [1-4，默认1]: " security_choice
+
+    local security="auto"
+    case $security_choice in
+        2) security="aes-128-gcm" ;;
+        3) security="chacha20-poly1305" ;;
+        4) security="none" ;;
+        *) security="auto" ;;
+    esac
+
+    # 构建 user 配置
+    local user_config=$(jq -n \
+        --arg id "$uuid" \
+        --arg security "$security" \
+        --argjson level 0 \
+        '{id: $id, security: $security, level: $level}')
+
+    # 构建完整出站配置
+    local outbound_config=$(jq -n \
+        --arg tag "$tag" \
+        --arg address "$server" \
+        --argjson port "$port" \
+        --argjson user "$user_config" \
+        '{
+            protocol: "vmess",
+            tag: $tag,
+            settings: {
+                vnext: [{
+                    address: $address,
+                    port: $port,
+                    users: [$user]
+                }]
+            }
+        }')
+
+    # 添加到文件
+    init_outbound_file
+    jq --argjson outbound "$outbound_config" '.outbounds += [$outbound]' "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
+    mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
+
+    print_success "VMess 出站添加成功！"
+    echo ""
+    echo -e "${OUTBOUND_CYAN}出站信息：${OUTBOUND_NC}"
+    echo -e "  标签: $tag"
+    echo -e "  服务器: $server:$port"
+    echo -e "  UUID: ${uuid:0:8}...${uuid: -8}"
+    echo -e "  加密: $security"
+}
+
+#================================================================
+# 添加 Trojan 出站
+#================================================================
+add_trojan_outbound() {
+    clear
+    echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}║      添加 Trojan 出站                ║${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
+    echo ""
+
+    echo -e "${OUTBOUND_YELLOW}Trojan 出站说明：${OUTBOUND_NC}"
+    echo -e "  • 设计工作在 TLS 隧道中"
+    echo -e "  • 使用密码认证"
+    echo -e "  • 需要配合 TLS 使用"
+    echo ""
+
+    # 输入标签
+    read -p "请输入出站标签 (例如: trojan-proxy): " tag
+    if [[ -z "$tag" ]]; then
+        print_error "标签不能为空"
+        return 1
+    fi
+
+    # 检查标签是否已存在
+    if jq -e --arg tag "$tag" '.outbounds[] | select(.tag == $tag)' "$OUTBOUND_FILE" >/dev/null 2>&1; then
+        print_error "标签 '$tag' 已存在"
+        return 1
+    fi
+
+    # 服务器地址和端口
+    echo ""
+    read -p "请输入服务器地址: " server
+    if [[ -z "$server" ]]; then
+        print_error "服务器地址不能为空"
+        return 1
+    fi
+
+    read -p "请输入端口 (默认: 443): " port
+    port=${port:-443}
+
+    # 密码
+    read -p "请输入密码: " password
+    if [[ -z "$password" ]]; then
+        print_error "密码不能为空"
+        return 1
+    fi
+
+    # 构建 server 配置
+    local server_config=$(jq -n \
+        --arg address "$server" \
+        --argjson port "$port" \
+        --arg password "$password" \
+        --argjson level 0 \
+        '{address: $address, port: $port, password: $password, level: $level}')
+
+    # 构建完整出站配置
+    local outbound_config=$(jq -n \
+        --arg tag "$tag" \
+        --argjson server "$server_config" \
+        '{
+            protocol: "trojan",
+            tag: $tag,
+            settings: {
+                servers: [$server]
+            }
+        }')
+
+    # 添加到文件
+    init_outbound_file
+    jq --argjson outbound "$outbound_config" '.outbounds += [$outbound]' "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
+    mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
+
+    print_success "Trojan 出站添加成功！"
+    echo ""
+    echo -e "${OUTBOUND_CYAN}出站信息：${OUTBOUND_NC}"
+    echo -e "  标签: $tag"
+    echo -e "  服务器: $server:$port"
+    echo -e "  密码: ${password:0:4}***${password: -4}"
+}
+
+#================================================================
+# 添加 Shadowsocks 出站
+#================================================================
+add_shadowsocks_outbound() {
+    clear
+    echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}║      添加 Shadowsocks 出站           ║${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
+    echo ""
+
+    echo -e "${OUTBOUND_YELLOW}Shadowsocks 出站说明：${OUTBOUND_NC}"
+    echo -e "  • 支持 TCP 和 UDP"
+    echo -e "  • 多种加密方式"
+    echo -e "  • 推荐使用 2022 新协议"
+    echo ""
+
+    # 输入标签
+    read -p "请输入出站标签 (例如: ss-proxy): " tag
+    if [[ -z "$tag" ]]; then
+        print_error "标签不能为空"
+        return 1
+    fi
+
+    # 检查标签是否已存在
+    if jq -e --arg tag "$tag" '.outbounds[] | select(.tag == $tag)' "$OUTBOUND_FILE" >/dev/null 2>&1; then
+        print_error "标签 '$tag' 已存在"
+        return 1
+    fi
+
+    # 服务器地址和端口
+    echo ""
+    read -p "请输入服务器地址: " server
+    if [[ -z "$server" ]]; then
+        print_error "服务器地址不能为空"
+        return 1
+    fi
+
+    read -p "请输入端口 (默认: 8388): " port
+    port=${port:-8388}
+
+    # 加密方式
+    echo ""
+    echo -e "${OUTBOUND_YELLOW}加密方式:${OUTBOUND_NC}"
+    echo -e "  1. 2022-blake3-aes-128-gcm (推荐)"
+    echo -e "  2. 2022-blake3-aes-256-gcm"
+    echo -e "  3. 2022-blake3-chacha20-poly1305"
+    echo -e "  4. aes-256-gcm"
+    echo -e "  5. aes-128-gcm"
+    echo -e "  6. chacha20-ietf-poly1305"
+    read -p "请选择 [1-6，默认1]: " method_choice
+
+    local method="2022-blake3-aes-128-gcm"
+    case $method_choice in
+        2) method="2022-blake3-aes-256-gcm" ;;
+        3) method="2022-blake3-chacha20-poly1305" ;;
+        4) method="aes-256-gcm" ;;
+        5) method="aes-128-gcm" ;;
+        6) method="chacha20-ietf-poly1305" ;;
+        *) method="2022-blake3-aes-128-gcm" ;;
+    esac
+
+    # 密码
+    read -p "请输入密码: " password
+    if [[ -z "$password" ]]; then
+        print_error "密码不能为空"
+        return 1
+    fi
+
+    # 构建 server 配置
+    local server_config=$(jq -n \
+        --arg address "$server" \
+        --argjson port "$port" \
+        --arg method "$method" \
+        --arg password "$password" \
+        --argjson level 0 \
+        '{address: $address, port: $port, method: $method, password: $password, level: $level}')
+
+    # 构建完整出站配置
+    local outbound_config=$(jq -n \
+        --arg tag "$tag" \
+        --argjson server "$server_config" \
+        '{
+            protocol: "shadowsocks",
+            tag: $tag,
+            settings: {
+                servers: [$server]
+            }
+        }')
+
+    # 添加到文件
+    init_outbound_file
+    jq --argjson outbound "$outbound_config" '.outbounds += [$outbound]' "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
+    mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
+
+    print_success "Shadowsocks 出站添加成功！"
+    echo ""
+    echo -e "${OUTBOUND_CYAN}出站信息：${OUTBOUND_NC}"
+    echo -e "  标签: $tag"
+    echo -e "  服务器: $server:$port"
+    echo -e "  加密: $method"
+    echo -e "  密码: ${password:0:4}***${password: -4}"
+}
+
+#================================================================
 # 应用出站规则到节点
 #================================================================
 apply_outbound_to_node() {
@@ -699,24 +1087,49 @@ outbound_management_menu() {
         echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
         echo ""
         echo -e "${OUTBOUND_GREEN}1.${OUTBOUND_NC} 查看出站规则"
-        echo -e "${OUTBOUND_GREEN}2.${OUTBOUND_NC} 添加 HTTP 出站"
-        echo -e "${OUTBOUND_GREEN}3.${OUTBOUND_NC} 添加 SOCKS 出站"
-        echo -e "${OUTBOUND_GREEN}4.${OUTBOUND_NC} 应用出站规则到节点"
-        echo -e "${OUTBOUND_GREEN}5.${OUTBOUND_NC} 禁用节点的出站规则"
-        echo -e "${OUTBOUND_GREEN}6.${OUTBOUND_NC} 修改出站规则"
-        echo -e "${OUTBOUND_GREEN}7.${OUTBOUND_NC} 删除出站规则"
+        echo -e "${OUTBOUND_GREEN}2.${OUTBOUND_NC} 添加出站规则"
+        echo -e "${OUTBOUND_GREEN}3.${OUTBOUND_NC} 应用出站规则到节点"
+        echo -e "${OUTBOUND_GREEN}4.${OUTBOUND_NC} 禁用节点的出站规则"
+        echo -e "${OUTBOUND_GREEN}5.${OUTBOUND_NC} 修改出站规则"
+        echo -e "${OUTBOUND_GREEN}6.${OUTBOUND_NC} 删除出站规则"
         echo -e "${OUTBOUND_GREEN}0.${OUTBOUND_NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-7]: " choice
+        read -p "请选择操作 [0-6]: " choice
 
         case $choice in
             1) list_outbounds ;;
-            2) add_http_outbound ;;
-            3) add_socks_outbound ;;
-            4) apply_outbound_to_node ;;
-            5) disable_outbound_from_node ;;
-            6) modify_outbound ;;
-            7) delete_outbound ;;
+            2)
+                # 添加出站规则子菜单
+                clear
+                echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
+                echo -e "${OUTBOUND_CYAN}║      添加出站规则                    ║${OUTBOUND_NC}"
+                echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
+                echo ""
+                echo -e "${OUTBOUND_GREEN}1.${OUTBOUND_NC} HTTP 代理"
+                echo -e "${OUTBOUND_GREEN}2.${OUTBOUND_NC} SOCKS 代理"
+                echo -e "${OUTBOUND_GREEN}3.${OUTBOUND_NC} VLESS 协议"
+                echo -e "${OUTBOUND_GREEN}4.${OUTBOUND_NC} VMess 协议"
+                echo -e "${OUTBOUND_GREEN}5.${OUTBOUND_NC} Trojan 协议"
+                echo -e "${OUTBOUND_GREEN}6.${OUTBOUND_NC} Shadowsocks 协议"
+                echo -e "${OUTBOUND_GREEN}0.${OUTBOUND_NC} 返回"
+                echo ""
+                read -p "请选择协议 [0-6]: " protocol_choice
+
+                case $protocol_choice in
+                    1) add_http_outbound ;;
+                    2) add_socks_outbound ;;
+                    3) add_vless_outbound ;;
+                    4) add_vmess_outbound ;;
+                    5) add_trojan_outbound ;;
+                    6) add_shadowsocks_outbound ;;
+                    0) ;;
+                    *) print_error "无效选择" ;;
+                esac
+                ;;
+            3) apply_outbound_to_node ;;
+            4) disable_outbound_from_node ;;
+            5) modify_outbound ;;
+            6) delete_outbound ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
