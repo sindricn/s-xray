@@ -704,18 +704,19 @@ debug_user_traffic() {
     fi
 
     # 检查 xray 命令
-    if ! command -v xray &>/dev/null; then
-        echo "✗ xray 命令不可用"
+    local xray_bin="/usr/local/xray/xray"
+    if [[ ! -x "$xray_bin" ]]; then
+        echo "✗ xray 命令不可用: $xray_bin"
         return 1
     fi
-    echo "✓ xray 命令可用"
+    echo "✓ xray 命令可用: $xray_bin"
     echo ""
 
     # 查询上行流量
     echo "查询上行流量..."
     local uplink_name="user>>>${email}>>>traffic>>>uplink"
     echo "查询名称: $uplink_name"
-    local uplink_response=$(xray api statsquery --server=$api_addr --name "$uplink_name" 2>/dev/null)
+    local uplink_response=$($xray_bin api statsquery --server=$api_addr --name "$uplink_name" 2>/dev/null)
     echo "API 响应: $uplink_response"
     local uplink=$(echo "$uplink_response" | grep "value" | awk '{print $2}' | tr -d '\r')
     uplink=${uplink:-0}
@@ -726,7 +727,7 @@ debug_user_traffic() {
     echo "查询下行流量..."
     local downlink_name="user>>>${email}>>>traffic>>>downlink"
     echo "查询名称: $downlink_name"
-    local downlink_response=$(xray api statsquery --server=$api_addr --name "$downlink_name" 2>/dev/null)
+    local downlink_response=$($xray_bin api statsquery --server=$api_addr --name "$downlink_name" 2>/dev/null)
     echo "API 响应: $downlink_response"
     local downlink=$(echo "$downlink_response" | grep "value" | awk '{print $2}' | tr -d '\r')
     downlink=${downlink:-0}
@@ -747,6 +748,7 @@ debug_user_traffic() {
 check_user_has_traffic() {
     local email=$1
     local api_addr="127.0.0.1:10085"
+    local xray_bin="/usr/local/xray/xray"
 
     # 检查 API 端口是否在监听
     if ! ss -lnt 2>/dev/null | grep -q ":10085 " && ! netstat -lnt 2>/dev/null | grep -q ":10085 "; then
@@ -755,17 +757,17 @@ check_user_has_traffic() {
     fi
 
     # 检查 xray 命令是否可用
-    if ! command -v xray &>/dev/null; then
+    if [[ ! -x "$xray_bin" ]]; then
         echo "unknown"
         return
     fi
 
     # 查询上行流量
-    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    local uplink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     uplink=${uplink:-0}
 
     # 查询下行流量
-    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    local downlink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     downlink=${downlink:-0}
 
     # 检查是否有流量数据
@@ -841,6 +843,7 @@ get_user_first_port() {
 get_user_traffic_summary() {
     local email=$1
     local api_addr="127.0.0.1:10085"
+    local xray_bin="/usr/local/xray/xray"
 
     # 检查 API 端口是否在监听
     if ! ss -lnt 2>/dev/null | grep -q ":10085 " && ! netstat -lnt 2>/dev/null | grep -q ":10085 "; then
@@ -849,17 +852,17 @@ get_user_traffic_summary() {
     fi
 
     # 检查 xray 命令是否可用
-    if ! command -v xray &>/dev/null; then
+    if [[ ! -x "$xray_bin" ]]; then
         echo "N/A"
         return
     fi
 
     # 查询上行流量
-    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    local uplink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     uplink=${uplink:-0}
 
     # 查询下行流量
-    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    local downlink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     downlink=${downlink:-0}
 
     # 转换为人类可读格式
