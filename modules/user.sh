@@ -95,9 +95,9 @@ list_global_users() {
         return 0
     fi
 
-    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════════════════════════╗${NC}"
-    printf "${CYAN}║${NC} %-12s %-16s %-18s %-20s %-8s ${CYAN}║${NC}\n" "用户名" "密码" "邮箱" "UUID" "状态"
-    echo -e "${CYAN}╠═══════════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    printf "${CYAN}║${NC} %-12s %-14s %-16s %-18s %-8s %-10s ${CYAN}║${NC}\n" "用户名" "密码" "邮箱" "UUID" "状态" "在线"
+    echo -e "${CYAN}╠════════════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
 
     while IFS= read -r user; do
         local username=$(echo "$user" | jq -r '.username // "未设置"')
@@ -106,14 +106,14 @@ list_global_users() {
         local uuid=$(echo "$user" | jq -r '.id')
         local enabled=$(echo "$user" | jq -r '.enabled // true')
 
-        local short_uuid="${uuid:0:18}..."
-        local short_password="${password:0:14}"
-        if [[ ${#password} -gt 14 ]]; then
-            short_password="${password:0:11}..."
+        local short_uuid="${uuid:0:16}..."
+        local short_password="${password:0:12}"
+        if [[ ${#password} -gt 12 ]]; then
+            short_password="${password:0:9}..."
         fi
-        local short_email="${email:0:16}"
-        if [[ ${#email} -gt 16 ]]; then
-            short_email="${email:0:13}..."
+        local short_email="${email:0:14}"
+        if [[ ${#email} -gt 14 ]]; then
+            short_email="${email:0:11}..."
         fi
 
         local status=""
@@ -123,10 +123,29 @@ list_global_users() {
             status="${RED}禁用${NC}"
         fi
 
-        printf "${CYAN}║${NC} %-12s %-16s %-18s %-20s %-8b ${CYAN}║${NC}\n" "$username" "$short_password" "$short_email" "$short_uuid" "$status"
+        # 获取在线状态
+        local online_status=""
+        if [[ "$enabled" == "true" ]]; then
+            local port=$(get_user_first_port "$uuid")
+            if [[ -n "$port" ]]; then
+                local user_status=$(get_user_online_status "$email" "$port")
+                case $user_status in
+                    online) online_status="${GREEN}在线${NC}" ;;
+                    offline) online_status="${YELLOW}离线${NC}" ;;
+                    never) online_status="${GRAY}未连接${NC}" ;;
+                    *) online_status="${GRAY}未知${NC}" ;;
+                esac
+            else
+                online_status="${GRAY}未绑定${NC}"
+            fi
+        else
+            online_status="${GRAY}已禁用${NC}"
+        fi
+
+        printf "${CYAN}║${NC} %-12s %-14s %-16s %-18s %-8b %-10b ${CYAN}║${NC}\n" "$username" "$short_password" "$short_email" "$short_uuid" "$status" "$online_status"
     done < <(jq -c '.users[]' "$USERS_FILE")
 
-    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo -e "${CYAN}总计: ${user_count} 个用户${NC}"
 }
 
@@ -660,6 +679,184 @@ update_user_level() {
     # 更新配置文件
     jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .level) = $new_level" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
     mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+}
+
+#================================================================
+# 用户在线状态检测
+#================================================================
+
+# 检查用户是否有流量记录
+check_user_has_traffic() {
+    local email=$1
+    local api_addr="127.0.0.1:10085"
+
+    # 检查 API 是否可用
+    if ! nc -z 127.0.0.1 10085 2>/dev/null; then
+        echo "unknown"
+        return
+    fi
+
+    # 查询流量统计
+    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0')
+    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0')
+
+    # 检查是否有流量数据
+    if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
+        echo "yes"
+        return
+    fi
+
+    echo "no"
+}
+
+# 检查端口是否有活跃连接
+check_port_has_connections() {
+    local port=$1
+
+    # 使用 ss 或 netstat 检查
+    if command -v ss &>/dev/null; then
+        if ss -tn 2>/dev/null | grep -q ":${port}.*ESTABLISHED"; then
+            echo "yes"
+            return
+        fi
+    elif command -v netstat &>/dev/null; then
+        if netstat -tn 2>/dev/null | grep -q ":${port}.*ESTABLISHED"; then
+            echo "yes"
+            return
+        fi
+    fi
+
+    echo "no"
+}
+
+# 获取用户在线状态（混合方案）
+get_user_online_status() {
+    local email=$1
+    local port=$2
+
+    # 检查流量记录
+    local has_traffic=$(check_user_has_traffic "$email")
+
+    if [[ "$has_traffic" == "no" ]]; then
+        echo "never"  # 从未连接
+        return
+    elif [[ "$has_traffic" == "unknown" ]]; then
+        echo "unknown"  # API 不可用
+        return
+    fi
+
+    # 检查节点连接
+    local has_conn=$(check_port_has_connections "$port")
+
+    if [[ "$has_conn" == "yes" ]]; then
+        echo "online"  # 可能在线
+    else
+        echo "offline"  # 离线
+    fi
+}
+
+# 获取用户绑定的第一个节点端口
+get_user_first_port() {
+    local uuid=$1
+
+    if [[ ! -f "$NODE_USERS_FILE" ]]; then
+        echo ""
+        return
+    fi
+
+    # 查找包含该用户的第一个节点
+    local port=$(jq -r ".bindings[] | select(.users[] == \"$uuid\") | .port" "$NODE_USERS_FILE" 2>/dev/null | head -n 1)
+    echo "$port"
+}
+
+# 获取用户流量摘要
+get_user_traffic_summary() {
+    local email=$1
+    local api_addr="127.0.0.1:10085"
+
+    # 检查 API 是否可用
+    if ! nc -z 127.0.0.1 10085 2>/dev/null; then
+        echo "N/A"
+        return
+    fi
+
+    # 查询流量统计
+    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0')
+    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0')
+
+    # 转换为人类可读格式
+    local uplink_mb=$((uplink / 1048576))
+    local downlink_mb=$((downlink / 1048576))
+
+    echo "↑${uplink_mb}MB ↓${downlink_mb}MB"
+}
+
+# 查看在线用户
+show_online_users() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      在线用户列表                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 获取所有用户
+    if [[ ! -f "$USERS_FILE" ]]; then
+        print_warning "用户文件不存在"
+        return 1
+    fi
+
+    local total_users=$(jq '.users | length' "$USERS_FILE" 2>/dev/null)
+    if [[ "$total_users" -eq 0 ]]; then
+        print_warning "没有用户"
+        return 0
+    fi
+
+    local online_count=0
+
+    echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════════════════╗${NC}"
+    printf "${CYAN}║${NC} %-15s %-20s %-10s %-20s %-12s ${CYAN}║${NC}\n" "用户名" "邮箱" "节点端口" "流量统计" "连接状态"
+    echo -e "${CYAN}╠═════════════════════════════════════════════════════════════════════════════╣${NC}"
+
+    while IFS= read -r user; do
+        local username=$(echo "$user" | jq -r '.username')
+        local email=$(echo "$user" | jq -r '.email')
+        local uuid=$(echo "$user" | jq -r '.id')
+        local enabled=$(echo "$user" | jq -r '.enabled // true')
+
+        # 只显示启用的用户
+        if [[ "$enabled" != "true" ]]; then
+            continue
+        fi
+
+        # 获取用户绑定的节点
+        local port=$(get_user_first_port "$uuid")
+        if [[ -z "$port" ]]; then
+            continue
+        fi
+
+        # 检测在线状态
+        local status=$(get_user_online_status "$email" "$port")
+
+        # 只显示在线或可能在线的用户
+        if [[ "$status" == "online" ]]; then
+            ((online_count++))
+
+            # 获取流量统计
+            local traffic=$(get_user_traffic_summary "$email")
+
+            # 截断显示
+            local short_username="${username:0:15}"
+            local short_email="${email:0:20}"
+            local short_traffic="${traffic:0:20}"
+
+            printf "${CYAN}║${NC} %-15s %-20s %-10s %-20s ${GREEN}%-12s${NC} ${CYAN}║${NC}\n" \
+                "$short_username" "$short_email" "$port" "$short_traffic" "在线"
+        fi
+    done < <(jq -c '.users[]' "$USERS_FILE")
+
+    echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}在线用户总数: ${GREEN}${online_count}${NC}"
 }
 
 

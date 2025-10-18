@@ -845,15 +845,17 @@ menu_user() {
         echo -e "${GREEN}2.${NC} 添加用户"
         echo -e "${GREEN}3.${NC} 修改用户"
         echo -e "${GREEN}4.${NC} 删除用户"
+        echo -e "${GREEN}5.${NC} 查看在线用户"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-4]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
             1) view_user_detail ;;
             2) add_global_user ;;
             3) modify_user_menu ;;
             4) delete_user_smart ;;
+            5) show_online_users ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
