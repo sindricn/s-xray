@@ -156,6 +156,13 @@ generate_xray_config() {
         {
             protocol: "blackhole",
             tag: "block"
+        },
+        {
+            protocol: "dokodemo-door",
+            tag: "api",
+            settings: {
+                address: "127.0.0.1"
+            }
         }
     ]')
 
