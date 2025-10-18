@@ -749,7 +749,7 @@ check_port_has_connections() {
     echo "no"
 }
 
-# 获取用户在线状态（混合方案）
+# 获取用户在线状态（混合方案）- 单端口检测
 get_user_online_status() {
     local email=$1
     local port=$2
@@ -775,6 +775,49 @@ get_user_online_status() {
     fi
 }
 
+# 检测用户在所有绑定端口上的在线状态，返回"状态:端口"
+get_user_online_status_with_port() {
+    local email=$1
+    local uuid=$2
+
+    # 检查流量记录（Stats API返回的是累计流量，不会归零）
+    local has_traffic=$(check_user_has_traffic "$email")
+
+    if [[ "$has_traffic" == "unknown" ]]; then
+        echo "unknown:"  # API 不可用
+        return
+    fi
+
+    # 检查所有绑定端口的连接状态
+    local all_ports=$(get_user_all_ports "$uuid")
+    local active_port=""
+    local has_connection=false
+
+    if [[ -n "$all_ports" ]]; then
+        while IFS= read -r port; do
+            [[ -z "$port" ]] && continue
+            local has_conn=$(check_port_has_connections "$port")
+            if [[ "$has_conn" == "yes" ]]; then
+                active_port="$port"
+                has_connection=true
+                break
+            fi
+        done <<< "$all_ports"
+    fi
+
+    # 判断逻辑:
+    # 1. 有流量 + 有连接 = 在线 (正在使用)
+    # 2. 有流量 + 无连接 = 离线 (之前用过,现在断开了)
+    # 3. 无流量 + 有连接 = 离线 (可能是其他服务的连接,不是Xray用户连接)
+    # 4. 无流量 + 无连接 = 离线
+
+    if [[ "$has_traffic" == "yes" && "$has_connection" == true ]]; then
+        echo "online:$active_port"
+    else
+        echo "offline:"
+    fi
+}
+
 # 获取用户绑定的第一个节点端口
 get_user_first_port() {
     local uuid=$1
@@ -787,6 +830,20 @@ get_user_first_port() {
     # 查找包含该用户的第一个节点
     local port=$(jq -r ".bindings[] | select(.users[] == \"$uuid\") | .port" "$NODE_USERS_FILE" 2>/dev/null | head -n 1)
     echo "$port"
+}
+
+# 获取用户绑定的所有节点端口
+get_user_all_ports() {
+    local uuid=$1
+
+    if [[ ! -f "$NODE_USERS_FILE" ]]; then
+        echo ""
+        return
+    fi
+
+    # 查找包含该用户的所有节点端口
+    local ports=$(jq -r ".bindings[] | select(.users[] == \"$uuid\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+    echo "$ports"
 }
 
 # 从配置文件中获取用户的实际email
@@ -904,13 +961,13 @@ show_online_users() {
             continue
         fi
 
-        # 获取用户绑定的节点
-        local port=$(get_user_first_port "$uuid")
+        # 检查用户是否有绑定的端口
+        local all_ports=$(get_user_all_ports "$uuid")
         if [[ "$debug_mode" == "true" ]]; then
-            echo "  绑定端口: ${port:-未绑定}"
+            echo "  绑定端口: ${all_ports:-未绑定}"
         fi
 
-        if [[ -z "$port" ]]; then
+        if [[ -z "$all_ports" ]]; then
             [[ "$debug_mode" == "true" ]] && echo "  ${GRAY}跳过: 未绑定节点${NC}"
             continue
         fi
@@ -926,10 +983,14 @@ show_online_users() {
             continue
         fi
 
-        # 检测在线状态
-        local status=$(get_user_online_status "$config_email" "$port")
+        # 检测在线状态和实际连接的端口
+        local status_port=$(get_user_online_status_with_port "$config_email" "$uuid")
+        local status=$(echo "$status_port" | cut -d: -f1)
+        local active_port=$(echo "$status_port" | cut -d: -f2)
+
         if [[ "$debug_mode" == "true" ]]; then
             echo "  在线状态: $status"
+            echo "  活跃端口: ${active_port:-无}"
         fi
 
         # 只显示在线或可能在线的用户
@@ -945,9 +1006,9 @@ show_online_users() {
             local short_traffic="${traffic:0:20}"
 
             printf "${CYAN}║${NC} %-15s %-20s %-10s %-20s ${GREEN}%-12s${NC} ${CYAN}║${NC}\n" \
-                "$short_username" "$short_email" "$port" "$short_traffic" "在线"
+                "$short_username" "$short_email" "$active_port" "$short_traffic" "在线"
 
-            [[ "$debug_mode" == "true" ]] && echo "  ${GREEN}✅ 显示为在线${NC}"
+            [[ "$debug_mode" == "true" ]] && echo "  ${GREEN}✅ 显示为在线 (端口: $active_port)${NC}"
         else
             [[ "$debug_mode" == "true" ]] && echo "  ${GRAY}未显示: status=$status${NC}"
         fi
