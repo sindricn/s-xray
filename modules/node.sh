@@ -967,8 +967,8 @@ list_nodes() {
         return 0
     fi
 
-    printf "%-5s %-20s %-12s %-8s %-12s %-15s\n" "序号" "节点名称" "协议" "端口" "传输" "安全"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    printf "%-5s %-20s %-12s %-8s %-12s %-15s %-10s\n" "序号" "节点名称" "协议" "端口" "传输" "安全" "状态"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     local index=1
     while IFS= read -r node; do
@@ -983,7 +983,15 @@ list_nodes() {
             name="${name:0:15}..."
         fi
 
-        printf "%-5s %-20s %-12s %-8s %-12s %-15s\n" "$index" "$name" "$protocol" "$port" "$transport" "$security"
+        # 检测端口是否在监听（真实在线状态）
+        local status=""
+        if check_port_exists "$port"; then
+            status="${GREEN}在线${NC}"
+        else
+            status="${RED}离线${NC}"
+        fi
+
+        printf "%-5s %-20s %-12s %-8s %-12s %-15s %-10b\n" "$index" "$name" "$protocol" "$port" "$transport" "$security" "$status"
         ((index++))
     done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
 
@@ -1022,9 +1030,18 @@ show_node_detail() {
     local created=$(echo "$node" | jq -r '.created')
     local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
 
+    # 检测节点在线状态
+    local status_text=""
+    if check_port_exists "$port"; then
+        status_text="${GREEN}在线${NC}"
+    else
+        status_text="${RED}离线${NC}"
+    fi
+
     echo -e "${GREEN}基本信息：${NC}"
     echo -e "  节点名称: ${YELLOW}$name${NC}"
     echo -e "  端口: ${YELLOW}$port${NC}"
+    echo -e "  状态: $status_text"
     echo -e "  协议: ${YELLOW}$protocol${NC}"
     echo -e "  传输: ${YELLOW}$transport${NC}"
     echo -e "  安全: ${YELLOW}$security${NC}"
