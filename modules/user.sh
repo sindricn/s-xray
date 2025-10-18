@@ -795,13 +795,20 @@ get_user_email_from_config() {
         return
     fi
 
-    # 在所有inbound的clients中查找该UUID对应的email
+    # 首先尝试用UUID查找(适用于vless/vmess)
     local email=$(jq -r ".inbounds[].settings.clients[]? | select(.id == \"$uuid\") | .email" "$XRAY_CONFIG" 2>/dev/null | head -n 1)
 
-    # 如果没找到,可能是trojan/shadowsocks使用password而不是id
+    # 如果没找到,可能是trojan/shadowsocks,需要用password查找
     if [[ -z "$email" || "$email" == "null" ]]; then
-        # 对于trojan,password字段存储的是用户的password(即UUID)
-        email=$(jq -r ".inbounds[].settings.clients[]? | select(.password == \"$uuid\") | .email" "$XRAY_CONFIG" 2>/dev/null | head -n 1)
+        # 从用户文件中获取该UUID对应的password
+        if [[ -f "$USERS_FILE" ]]; then
+            local password=$(jq -r ".users[] | select(.id == \"$uuid\") | .password" "$USERS_FILE" 2>/dev/null)
+
+            if [[ -n "$password" && "$password" != "null" ]]; then
+                # 用password查找email
+                email=$(jq -r ".inbounds[].settings.clients[]? | select(.password == \"$password\") | .email" "$XRAY_CONFIG" 2>/dev/null | head -n 1)
+            fi
+        fi
     fi
 
     echo "$email"
@@ -842,6 +849,8 @@ get_user_traffic_summary() {
 
 # 查看在线用户
 show_online_users() {
+    local debug_mode=${1:-false}  # 可选的调试模式参数
+
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║      在线用户列表                    ║${NC}"
@@ -861,6 +870,12 @@ show_online_users() {
     fi
 
     local online_count=0
+    local checked_count=0
+
+    if [[ "$debug_mode" == "true" ]]; then
+        echo -e "${YELLOW}=== 调试模式 ===${NC}"
+        echo ""
+    fi
 
     echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════════════════╗${NC}"
     printf "${CYAN}║${NC} %-15s %-20s %-10s %-20s %-12s ${CYAN}║${NC}\n" "用户名" "邮箱" "节点端口" "流量统计" "连接状态"
@@ -872,25 +887,47 @@ show_online_users() {
         local uuid=$(echo "$user" | jq -r '.id')
         local enabled=$(echo "$user" | jq -r '.enabled // true')
 
+        ((checked_count++))
+
+        if [[ "$debug_mode" == "true" ]]; then
+            echo -e "\n${YELLOW}[调试] 检查用户 #$checked_count: $username${NC}"
+            echo "  UUID: $uuid"
+            echo "  Enabled: $enabled"
+        fi
+
         # 只显示启用的用户
         if [[ "$enabled" != "true" ]]; then
+            [[ "$debug_mode" == "true" ]] && echo "  ${GRAY}跳过: 用户未启用${NC}"
             continue
         fi
 
         # 获取用户绑定的节点
         local port=$(get_user_first_port "$uuid")
+        if [[ "$debug_mode" == "true" ]]; then
+            echo "  绑定端口: ${port:-未绑定}"
+        fi
+
         if [[ -z "$port" ]]; then
+            [[ "$debug_mode" == "true" ]] && echo "  ${GRAY}跳过: 未绑定节点${NC}"
             continue
         fi
 
         # 从配置文件中获取实际使用的email
         local config_email=$(get_user_email_from_config "$uuid")
+        if [[ "$debug_mode" == "true" ]]; then
+            echo "  配置Email: ${config_email:-未找到}"
+        fi
+
         if [[ -z "$config_email" || "$config_email" == "null" ]]; then
+            [[ "$debug_mode" == "true" ]] && echo "  ${GRAY}跳过: 配置中无Email${NC}"
             continue
         fi
 
         # 检测在线状态
         local status=$(get_user_online_status "$config_email" "$port")
+        if [[ "$debug_mode" == "true" ]]; then
+            echo "  在线状态: $status"
+        fi
 
         # 只显示在线或可能在线的用户
         if [[ "$status" == "online" ]]; then
@@ -906,12 +943,21 @@ show_online_users() {
 
             printf "${CYAN}║${NC} %-15s %-20s %-10s %-20s ${GREEN}%-12s${NC} ${CYAN}║${NC}\n" \
                 "$short_username" "$short_email" "$port" "$short_traffic" "在线"
+
+            [[ "$debug_mode" == "true" ]] && echo "  ${GREEN}✅ 显示为在线${NC}"
+        else
+            [[ "$debug_mode" == "true" ]] && echo "  ${GRAY}未显示: status=$status${NC}"
         fi
     done < <(jq -c '.users[]' "$USERS_FILE")
 
     echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${CYAN}在线用户总数: ${GREEN}${online_count}${NC}"
+    echo -e "${CYAN}在线用户总数: ${GREEN}${online_count}${NC}${GRAY} / 已检查: $checked_count${NC}"
+
+    if [[ "$debug_mode" == "true" ]]; then
+        echo ""
+        echo -e "${YELLOW}提示: 要使用调试模式,请运行: show_online_users true${NC}"
+    fi
 }
 
 
