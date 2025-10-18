@@ -337,21 +337,39 @@ delete_single_user() {
 
     # 警告
     echo ""
-    print_warning "删除用户将同时清理所有节点绑定关系"
+    print_warning "删除用户将同时清理所有节点绑定关系和订阅链接"
     read -p "确认删除用户 $username? [y/N]: " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         print_info "取消删除"
         return 0
     fi
 
-    # 从所有节点解绑
+    # 1. 删除该用户的所有订阅
+    if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
+        # 获取该用户的所有订阅名称
+        local sub_names=$(jq -r ".subscriptions[] | select(.user_id == \"$uuid\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
+        if [[ -n "$sub_names" ]]; then
+            while IFS= read -r sub_name; do
+                # 删除订阅文件
+                find "$SUBSCRIPTION_DIR" -name "${sub_name}.*" -type f -delete 2>/dev/null
+                print_info "已删除订阅: $sub_name"
+            done <<< "$sub_names"
+
+            # 从元数据中删除
+            jq ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+            mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
+            print_info "已清理订阅元数据"
+        fi
+    fi
+
+    # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
         jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
-    # 从全局用户列表删除
+    # 3. 从全局用户列表删除
     jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
@@ -392,21 +410,39 @@ delete_global_user() {
 
     # 警告
     echo ""
-    print_warning "删除用户将同时清理所有节点绑定关系"
+    print_warning "删除用户将同时清理所有节点绑定关系和订阅链接"
     read -p "确认删除用户 $username? [y/N]: " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         print_info "取消删除"
         return 0
     fi
 
-    # 从所有节点解绑
+    # 1. 删除该用户的所有订阅
+    if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
+        # 获取该用户的所有订阅名称
+        local sub_names=$(jq -r ".subscriptions[] | select(.user_id == \"$uuid\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
+        if [[ -n "$sub_names" ]]; then
+            while IFS= read -r sub_name; do
+                # 删除订阅文件
+                find "$SUBSCRIPTION_DIR" -name "${sub_name}.*" -type f -delete 2>/dev/null
+                print_info "已删除订阅: $sub_name"
+            done <<< "$sub_names"
+
+            # 从元数据中删除
+            jq ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+            mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
+            print_info "已清理订阅元数据"
+        fi
+    fi
+
+    # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
         jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
-    # 从全局用户列表删除
+    # 3. 从全局用户列表删除
     jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 

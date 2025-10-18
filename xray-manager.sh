@@ -916,11 +916,12 @@ modify_user_menu() {
         echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
         echo ""
         echo -e "${GREEN}1.${NC} 修改基础信息"
-        echo -e "${GREEN}2.${NC} 添加绑定节点"
-        echo -e "${GREEN}3.${NC} 移除绑定节点"
+        echo -e "${GREEN}2.${NC} 修改流量与有效期"
+        echo -e "${GREEN}3.${NC} 添加绑定节点"
+        echo -e "${GREEN}4.${NC} 移除绑定节点"
         echo -e "${GREEN}0.${NC} 返回"
         echo ""
-        read -p "请选择操作 [0-3]: " choice
+        read -p "请选择操作 [0-4]: " choice
 
         case $choice in
             1)
@@ -932,9 +933,12 @@ modify_user_menu() {
                 fi
                 ;;
             2)
-                bind_nodes_to_user_smart "$username"
+                modify_user_traffic_and_expire "$username"
                 ;;
             3)
+                bind_nodes_to_user_smart "$username"
+                ;;
+            4)
                 unbind_nodes_from_user_smart "$username"
                 ;;
             0)
@@ -947,6 +951,95 @@ modify_user_menu() {
 
         read -p "按 Enter 键继续..."
     done
+}
+
+# 修改用户流量与有效期
+modify_user_traffic_and_expire() {
+    local username="$1"
+
+    # 获取用户当前信息
+    local user_info=$(jq -r ".users[] | select(.username == \"$username\")" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$user_info" || "$user_info" == "null" ]]; then
+        print_error "用户不存在: $username"
+        return 1
+    fi
+
+    local current_traffic_limit=$(echo "$user_info" | jq -r '.traffic_limit_gb // "unlimited"')
+    local current_expire=$(echo "$user_info" | jq -r '.expire_date // "unlimited"')
+
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      修改流量与有效期                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${GREEN}用户: ${YELLOW}$username${NC}"
+    echo -e "${GREEN}当前流量限制: ${YELLOW}$current_traffic_limit GB${NC}"
+    echo -e "${GREEN}当前有效期: ${YELLOW}$current_expire${NC}"
+    echo ""
+
+    # 修改流量限制
+    read -p "请输入新的流量限制(GB) [留空保持不变，输入unlimited表示无限]: " new_traffic_limit
+    if [[ -z "$new_traffic_limit" ]]; then
+        new_traffic_limit="$current_traffic_limit"
+    fi
+
+    # 修改有效期
+    echo ""
+    echo -e "${CYAN}有效期设置：${NC}"
+    echo -e "  ${GREEN}1.${NC} 保持不变 ($current_expire)"
+    echo -e "  ${GREEN}2.${NC} 无限期"
+    echo -e "  ${GREEN}3.${NC} 30天后"
+    echo -e "  ${GREEN}4.${NC} 90天后"
+    echo -e "  ${GREEN}5.${NC} 180天后"
+    echo -e "  ${GREEN}6.${NC} 365天后"
+    echo -e "  ${GREEN}7.${NC} 自定义天数"
+    echo ""
+    read -p "请选择 [1-7]: " expire_choice
+
+    local new_expire="$current_expire"
+    case $expire_choice in
+        1)
+            new_expire="$current_expire"
+            ;;
+        2)
+            new_expire="unlimited"
+            ;;
+        3)
+            new_expire=$(date -d "+30 days" '+%Y-%m-%d' 2>/dev/null || date -v+30d '+%Y-%m-%d')
+            ;;
+        4)
+            new_expire=$(date -d "+90 days" '+%Y-%m-%d' 2>/dev/null || date -v+90d '+%Y-%m-%d')
+            ;;
+        5)
+            new_expire=$(date -d "+180 days" '+%Y-%m-%d' 2>/dev/null || date -v+180d '+%Y-%m-%d')
+            ;;
+        6)
+            new_expire=$(date -d "+365 days" '+%Y-%m-%d' 2>/dev/null || date -v+365d '+%Y-%m-%d')
+            ;;
+        7)
+            read -p "请输入天数: " custom_days
+            if [[ "$custom_days" =~ ^[0-9]+$ ]] && [[ $custom_days -gt 0 ]]; then
+                new_expire=$(date -d "+${custom_days} days" '+%Y-%m-%d' 2>/dev/null || date -v+${custom_days}d '+%Y-%m-%d')
+            else
+                print_warning "无效的天数，保持不变"
+                new_expire="$current_expire"
+            fi
+            ;;
+        *)
+            print_warning "无效选择，保持不变"
+            new_expire="$current_expire"
+            ;;
+    esac
+
+    # 更新用户信息
+    jq ".users |= map(if .username == \"$username\" then .traffic_limit_gb = \"$new_traffic_limit\" | .expire_date = \"$new_expire\" else . end)" \
+        "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+    echo ""
+    print_success "流量与有效期修改成功"
+    echo -e "  流量限制: ${YELLOW}$new_traffic_limit GB${NC}"
+    echo -e "  有效期: ${YELLOW}$new_expire${NC}"
 }
 
 # 智能删除用户（自动识别单个/批量）

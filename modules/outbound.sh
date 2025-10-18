@@ -878,18 +878,56 @@ delete_outbound() {
         return 1
     fi
 
+    # 检查是否有节点使用该出站规则
+    local affected_nodes=""
+    if [[ -f "$NODES_FILE" ]]; then
+        affected_nodes=$(jq -r ".nodes[] | select(.outbound_tag == \"$tag\") | .port" "$NODES_FILE" 2>/dev/null)
+    fi
+
     echo ""
+    if [[ -n "$affected_nodes" ]]; then
+        print_warning "以下节点正在使用该出站规则："
+        echo "$affected_nodes" | while read -r port; do
+            local node_name=$(jq -r ".nodes[] | select(.port == \"$port\") | .name" "$NODES_FILE" 2>/dev/null)
+            echo "  - 端口 $port ($node_name)"
+        done
+        print_warning "删除后这些节点的出站规则将被清空"
+    fi
+
     read -p "确认删除出站规则 '$tag'? [y/N]: " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         print_info "已取消删除"
         return 0
     fi
 
-    # 删除
+    # 1. 从使用该出站的节点中移除 outbound_tag
+    if [[ -n "$affected_nodes" ]] && [[ -f "$NODES_FILE" ]]; then
+        jq --arg tag "$tag" '
+            .nodes = [.nodes[] |
+                if .outbound_tag == $tag then
+                    del(.outbound_tag)
+                else
+                    .
+                end
+            ]
+        ' "$NODES_FILE" > "${NODES_FILE}.tmp"
+        mv "${NODES_FILE}.tmp" "$NODES_FILE"
+        print_info "已更新节点配置"
+    fi
+
+    # 2. 删除出站规则
     jq --arg tag "$tag" '.outbounds = [.outbounds[] | select(.tag != $tag)]' "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
     mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
 
     print_success "出站规则已删除: $tag"
+
+    # 3. 重新生成 Xray 配置
+    if [[ -n "$affected_nodes" ]]; then
+        print_info "正在重新生成配置..."
+        generate_xray_config
+        restart_xray
+        print_success "配置已更新并重启服务"
+    fi
 }
 
 #================================================================
