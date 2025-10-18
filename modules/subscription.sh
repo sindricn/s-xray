@@ -1125,6 +1125,7 @@ generate_subscription_with_user() {
     local expire_date=$(echo "$user_info" | jq -r '.expire_date // "unlimited"')
     local traffic_limit=$(echo "$user_info" | jq -r '.traffic_limit_gb // "unlimited"')
     local traffic_used=$(echo "$user_info" | jq -r '.traffic_used_gb // "0"')
+    local sub_user_password=$(echo "$user_info" | jq -r '.password // ""')
 
     echo -e "${CYAN}用户配置：${NC}"
     echo -e "  有效期: ${YELLOW}$expire_date${NC}"
@@ -1206,9 +1207,21 @@ generate_subscription_with_user() {
 
     case $sub_type in
         general)
-            # 通用订阅 - Base64编码（每行一个链接，然后整体编码）
-            local raw_links=$(printf "%s\n" "${share_links[@]}")
-            sub_content=$(echo -n "$raw_links" | base64_encode)
+            # 通用订阅 - Base64编码（每行一个链接，然后整体编码，不包含最后的换行）
+            if [[ ${#share_links[@]} -gt 0 ]]; then
+                local raw_links=""
+                for link in "${share_links[@]}"; do
+                    if [[ -n "$raw_links" ]]; then
+                        raw_links="${raw_links}\n${link}"
+                    else
+                        raw_links="$link"
+                    fi
+                done
+                # 使用echo -e来处理\n,然后Base64编码,去除所有换行
+                sub_content=$(echo -e "$raw_links" | base64 -w 0 2>/dev/null || echo -e "$raw_links" | base64 | tr -d '\n')
+            else
+                sub_content=""
+            fi
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}.txt"
             ;;
         raw)
@@ -1522,17 +1535,20 @@ show_subscription_links() {
             username=$(jq -r ".users[] | select(.id == \"$user_id\") | .username" "$USERS_FILE" 2>/dev/null)
         fi
 
-        # 构建访问URL
+        # 获取订阅端口
+        local sub_port=$(cat "${DATA_DIR}/sub_port.txt" 2>/dev/null || echo "8080")
+
+        # 构建访问URL (使用/sub/路径，与订阅服务器一致)
         local access_url=""
         case "$type" in
             general|1)
-                access_url="http://${server_ip}:${HTTP_PORT:-80}/subscriptions/${name}.txt"
+                access_url="http://${server_ip}:${sub_port}/sub/${name}.txt"
                 ;;
             raw|2)
-                access_url="http://${server_ip}:${HTTP_PORT:-80}/subscriptions/${name}_raw.txt"
+                access_url="http://${server_ip}:${sub_port}/sub/${name}_raw.txt"
                 ;;
             clash|3)
-                access_url="http://${server_ip}:${HTTP_PORT:-80}/subscriptions/${name}_clash.yaml"
+                access_url="http://${server_ip}:${sub_port}/sub/${name}_clash.yaml"
                 ;;
         esac
 
