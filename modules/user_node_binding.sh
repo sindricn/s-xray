@@ -181,15 +181,29 @@ show_user_node_bindings() {
         local protocol=$(echo "$binding" | jq -r '.protocol')
         local users=$(echo "$binding" | jq -r '.users[]')
 
-        echo -e "${GREEN}端口 $port ($protocol):${NC}"
+        # 获取节点名称
+        local node_name=$(jq -r ".nodes[] | select(.port == \"$port\") | .name // \"未命名\"" "$NODES_FILE" 2>/dev/null)
+        echo -e "${GREEN}端口 $port ($protocol) - $node_name:${NC}"
 
         if [[ -z "$users" ]]; then
             echo -e "  ${YELLOW}无绑定用户${NC}"
         else
             while IFS= read -r uuid; do
-                local username=$(jq -r ".users[] | select(.id == \"$uuid\") | .username" "$USERS_FILE" 2>/dev/null)
-                if [[ -n "$username" ]]; then
-                    echo -e "  ${CYAN}•${NC} $username (${uuid:0:8}...)"
+                local user=$(jq -r ".users[] | select(.id == \"$uuid\")" "$USERS_FILE" 2>/dev/null)
+                if [[ -n "$user" && "$user" != "null" ]]; then
+                    local username=$(echo "$user" | jq -r '.username // "未设置"')
+                    local email=$(echo "$user" | jq -r '.email // "未设置"')
+                    local enabled=$(echo "$user" | jq -r '.enabled // true')
+                    local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
+
+                    local status_text=""
+                    if [[ "$enabled" == "true" ]]; then
+                        status_text="${GREEN}启用${NC}"
+                    else
+                        status_text="${RED}禁用${NC}"
+                    fi
+
+                    echo -e "  ${CYAN}•${NC} $username ($email) - 状态: $status_text, 有效期: ${YELLOW}$expire_date${NC}"
                 fi
             done <<< "$users"
         fi
@@ -215,16 +229,27 @@ show_user_nodes() {
         return 1
     fi
 
-    # 获取用户UUID
-    local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
-    if [[ -z "$uuid" ]]; then
+    # 获取用户信息
+    local user=$(jq -r ".users[] | select(.username == \"$username\")" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$user" || "$user" == "null" ]]; then
         print_error "用户不存在: $username"
         return 1
     fi
 
+    local uuid=$(echo "$user" | jq -r '.id')
+    local email=$(echo "$user" | jq -r '.email // .username')
+    local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
+    local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
+    local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
+
     echo ""
-    echo -e "${GREEN}用户 $email 可访问的节点：${NC}"
+    echo -e "${GREEN}用户信息：${NC}"
+    echo -e "  用户名: ${YELLOW}$username${NC}"
+    echo -e "  邮箱: ${YELLOW}$email${NC}"
+    echo -e "  流量: ${YELLOW}${traffic_used}/${traffic_limit} GB${NC}"
+    echo -e "  有效期: ${YELLOW}$expire_date${NC}"
     echo ""
+    echo -e "${GREEN}可访问节点：${NC}"
 
     # 查找该用户绑定的所有节点
     local node_found=false
@@ -238,13 +263,17 @@ show_user_nodes() {
             node_found=true
             # 获取节点详细信息
             local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE")
+            local name=$(echo "$node" | jq -r '.name // "未命名"')
             local transport=$(echo "$node" | jq -r '.transport')
             local security=$(echo "$node" | jq -r '.security')
+            local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
 
-            echo -e "${CYAN}端口 $port:${NC}"
-            echo -e "  协议: $protocol"
-            echo -e "  传输: $transport"
-            echo -e "  安全: $security"
+            echo -e "  ${CYAN}•${NC} $name"
+            echo -e "    端口: ${YELLOW}$port${NC} | 协议: ${YELLOW}$protocol${NC}"
+            echo -e "    传输: ${YELLOW}$transport${NC} | 安全: ${YELLOW}$security${NC}"
+            if [[ -n "$outbound_tag" ]]; then
+                echo -e "    出站: ${GREEN}$outbound_tag${NC}"
+            fi
             echo ""
         fi
     done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)

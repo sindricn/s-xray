@@ -1037,7 +1037,11 @@ show_node_detail() {
             local user=$(jq -r ".users[] | select(.id == \"$uuid\")" "$USERS_FILE" 2>/dev/null)
             if [[ -n "$user" && "$user" != "null" ]]; then
                 local username=$(echo "$user" | jq -r '.username // "未设置"')
+                local email=$(echo "$user" | jq -r '.email // "未设置"')
                 local enabled=$(echo "$user" | jq -r '.enabled // true')
+                local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
+                local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
+                local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
 
                 local status_text=""
                 if [[ "$enabled" == "true" ]]; then
@@ -1046,7 +1050,9 @@ show_node_detail() {
                     status_text="${RED}禁用${NC}"
                 fi
 
-                echo -e "  ${CYAN}•${NC} $username (状态: $status_text)"
+                echo -e "  ${CYAN}•${NC} $username"
+                echo -e "    邮箱: ${YELLOW}$email${NC} | 状态: $status_text"
+                echo -e "    流量: ${YELLOW}${traffic_used}/${traffic_limit} GB${NC} | 有效期: ${YELLOW}$expire_date${NC}"
                 ((user_count++))
             fi
         done <<< "$users"
