@@ -128,13 +128,19 @@ list_global_users() {
         if [[ "$enabled" == "true" ]]; then
             local port=$(get_user_first_port "$uuid")
             if [[ -n "$port" ]]; then
-                local user_status=$(get_user_online_status "$email" "$port")
-                case $user_status in
-                    online) online_status="${GREEN}在线${NC}" ;;
-                    offline) online_status="${YELLOW}离线${NC}" ;;
-                    never) online_status="${GRAY}未连接${NC}" ;;
-                    *) online_status="${GRAY}未知${NC}" ;;
-                esac
+                # 从配置文件中获取实际使用的email(可能与用户文件中的不同)
+                local config_email=$(get_user_email_from_config "$uuid")
+                if [[ -n "$config_email" && "$config_email" != "null" ]]; then
+                    local user_status=$(get_user_online_status "$config_email" "$port")
+                    case $user_status in
+                        online) online_status="${GREEN}在线${NC}" ;;
+                        offline) online_status="${YELLOW}离线${NC}" ;;
+                        never) online_status="${GRAY}未连接${NC}" ;;
+                        *) online_status="${GRAY}未知${NC}" ;;
+                    esac
+                else
+                    online_status="${GRAY}无Email${NC}"
+                fi
             else
                 online_status="${GRAY}未绑定${NC}"
             fi
@@ -780,6 +786,27 @@ get_user_first_port() {
     echo "$port"
 }
 
+# 从配置文件中获取用户的实际email
+get_user_email_from_config() {
+    local uuid=$1
+
+    if [[ ! -f "$XRAY_CONFIG" ]]; then
+        echo ""
+        return
+    fi
+
+    # 在所有inbound的clients中查找该UUID对应的email
+    local email=$(jq -r ".inbounds[].settings.clients[]? | select(.id == \"$uuid\") | .email" "$XRAY_CONFIG" 2>/dev/null | head -n 1)
+
+    # 如果没找到,可能是trojan/shadowsocks使用password而不是id
+    if [[ -z "$email" || "$email" == "null" ]]; then
+        # 对于trojan,password字段存储的是用户的password(即UUID)
+        email=$(jq -r ".inbounds[].settings.clients[]? | select(.password == \"$uuid\") | .email" "$XRAY_CONFIG" 2>/dev/null | head -n 1)
+    fi
+
+    echo "$email"
+}
+
 # 获取用户流量摘要
 get_user_traffic_summary() {
     local email=$1
@@ -856,15 +883,21 @@ show_online_users() {
             continue
         fi
 
+        # 从配置文件中获取实际使用的email
+        local config_email=$(get_user_email_from_config "$uuid")
+        if [[ -z "$config_email" || "$config_email" == "null" ]]; then
+            continue
+        fi
+
         # 检测在线状态
-        local status=$(get_user_online_status "$email" "$port")
+        local status=$(get_user_online_status "$config_email" "$port")
 
         # 只显示在线或可能在线的用户
         if [[ "$status" == "online" ]]; then
             ((online_count++))
 
             # 获取流量统计
-            local traffic=$(get_user_traffic_summary "$email")
+            local traffic=$(get_user_traffic_summary "$config_email")
 
             # 截断显示
             local short_username="${username:0:15}"

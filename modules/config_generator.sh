@@ -64,9 +64,15 @@ generate_xray_config() {
                     local user=$(jq -r ".users[] | select(.id == \"$uuid\" and .enabled == true)" "$users_file" 2>/dev/null)
 
                     if [[ -n "$user" && "$user" != "null" ]]; then
-                        local email=$(echo "$user" | jq -r '.email')
+                        local email=$(echo "$user" | jq -r '.email // ""')
                         local level=$(echo "$user" | jq -r '.level // 0')
                         local password=$(echo "$user" | jq -r '.password // ""')
+
+                        # 如果email为空或null,使用UUID作为email(确保Stats API能工作)
+                        if [[ -z "$email" || "$email" == "null" ]]; then
+                            email="${uuid}@local"
+                            print_warning "    用户 $uuid 缺少email字段,使用默认: $email"
+                        fi
 
                         # 根据协议生成client配置
                         local client=""
@@ -114,7 +120,9 @@ generate_xray_config() {
                                 client=$(jq -n \
                                     --arg user "$username" \
                                     --arg pass "$password" \
-                                    '{user: $user, pass: $pass}')
+                                    --arg email "$email" \
+                                    --argjson level "$level" \
+                                    '{user: $user, pass: $pass, email: $email, level: $level}')
                                 ;;
                         esac
 
