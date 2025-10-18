@@ -895,111 +895,56 @@ show_node_share_link() {
     echo -e "  端口: ${YELLOW}$port${NC}"
     echo ""
 
-    # 选择用户
-    echo -e "${YELLOW}选择用户：${NC}"
-    echo -e "  ${GREEN}1.${NC} 使用admin用户（默认）"
-    echo -e "  ${GREEN}2.${NC} 选择其他用户"
-    echo ""
-    read -p "请选择 [1-2，默认: 1]: " user_choice
-
-    # 验证输入：空值默认为1，但0或其他无效值应该报错
-    if [[ -z "$user_choice" ]]; then
-        user_choice=1
-    elif [[ ! "$user_choice" =~ ^[12]$ ]]; then
-        print_error "无效的选择，请输入1或2"
-        return 1
+    # 查找该节点绑定的所有用户
+    local binding=$(jq -c ".bindings[] | select(.port == \"$port\")" "$NODE_USERS_FILE" 2>/dev/null)
+    if [[ -z "$binding" || "$binding" == "null" ]]; then
+        print_warning "该节点未绑定任何用户"
+        return 0
     fi
 
-    local final_uuid=""
-    local final_remark=""
+    local user_uuids=$(echo "$binding" | jq -r '.users[]')
+    if [[ -z "$user_uuids" ]]; then
+        print_warning "该节点未绑定任何用户"
+        return 0
+    fi
 
-    if [[ "$user_choice" == "2" ]]; then
-        # 显示用户列表
-        if [[ ! -f "$USERS_FILE" ]]; then
-            print_warning "暂无用户，使用admin用户"
-            local admin_info=$(get_admin_user_info)
-            if [[ $? -ne 0 ]]; then
-                print_error "无法获取admin用户信息"
-                return 1
-            fi
-            IFS='|' read -r final_uuid final_password final_remark <<< "$admin_info"
-        else
-            local user_count=$(jq -r '.users | length' "$USERS_FILE")
-            if [[ "$user_count" -eq 0 ]]; then
-                print_warning "暂无用户，使用admin用户"
-                local admin_info=$(get_admin_user_info)
-                if [[ $? -ne 0 ]]; then
-                    print_error "无法获取admin用户信息"
-                    return 1
-                fi
-                IFS='|' read -r final_uuid final_password final_remark <<< "$admin_info"
-            else
-                echo ""
-                echo -e "${YELLOW}用户列表：${NC}"
-                local uindex=1
-                while IFS= read -r user; do
-                    if [[ -z "$user" || "$user" == "null" ]]; then
-                        continue
-                    fi
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}该节点的用户链接：${NC}"
+    echo ""
 
-                    local uid=$(echo "$user" | jq -r '.id')
-                    local uname=$(echo "$user" | jq -r '.username')
-                    local uemail=$(echo "$user" | jq -r '.email // "无邮箱"')
-
-                    printf "${CYAN}[%d]${NC} ${YELLOW}%s${NC} (%s) - UUID: %s\n" "$uindex" "$uname" "$uemail" "${uid:0:16}..."
-                    ((uindex++))
-                done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
-
-                echo ""
-                read -p "请输入用户序号: " user_index
-
-                # 验证输入
-                if [[ ! "$user_index" =~ ^[0-9]+$ ]] || [[ "$user_index" -lt 1 ]] || [[ "$user_index" -gt "$((uindex-1))" ]]; then
-                    print_error "无效的序号"
-                    return 1
-                fi
-
-                local user=$(jq -c ".users[$((user_index-1))]" "$USERS_FILE" 2>/dev/null)
-                if [[ -z "$user" || "$user" == "null" ]]; then
-                    print_error "用户不存在"
-                    return 1
-                fi
-
-                final_uuid=$(echo "$user" | jq -r '.id')
-                final_remark=$(echo "$user" | jq -r '.username')
-            fi
+    local link_count=0
+    while IFS= read -r uuid; do
+        if [[ -z "$uuid" ]]; then
+            continue
         fi
+
+        # 获取用户信息
+        local user=$(jq -r ".users[] | select(.id == \"$uuid\")" "$USERS_FILE" 2>/dev/null)
+        if [[ -z "$user" || "$user" == "null" ]]; then
+            print_warning "用户UUID $uuid 不存在，跳过"
+            continue
+        fi
+
+        local username=$(echo "$user" | jq -r '.username')
+        local email=$(echo "$user" | jq -r '.email // .username')
+
+        # 生成该用户的分享链接
+        local share_link=$(generate_share_link_smart "$uuid" "$username" "$node")
+
+        if [[ -n "$share_link" ]]; then
+            ((link_count++))
+            echo -e "${YELLOW}[$link_count] 用户:${NC} ${CYAN}$username${NC} (${email})"
+            echo -e "    ${GREEN}$share_link${NC}"
+            echo ""
+        fi
+    done <<< "$user_uuids"
+
+    if [[ $link_count -eq 0 ]]; then
+        print_warning "未能生成任何链接"
     else
-        # 默认使用admin用户
-        local admin_info=$(get_admin_user_info)
-        if [[ $? -ne 0 ]]; then
-            print_error "无法获取admin用户信息"
-            return 1
-        fi
-        IFS='|' read -r final_uuid final_password final_remark <<< "$admin_info"
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        print_success "共生成 $link_count 个用户链接"
     fi
-
-    # 生成分享链接
-    echo ""
-    print_info "正在生成分享链接..."
-    echo ""
-
-    local share_link=$(generate_share_link_smart "$final_uuid" "$final_remark" "$node")
-
-    if [[ -z "$share_link" ]]; then
-        print_error "生成分享链接失败"
-        return 1
-    fi
-
-    echo -e "${GREEN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║      分享链接生成成功                ║${NC}"
-    echo -e "${GREEN}╚═══════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e "${CYAN}节点:${NC} ${name} (${protocol}:${port})"
-    echo -e "${CYAN}用户:${NC} ${final_remark}"
-    echo ""
-    echo -e "${CYAN}分享链接:${NC}"
-    echo -e "${GREEN}${share_link}${NC}"
     echo ""
 }
 
@@ -1399,9 +1344,9 @@ generate_subscription_with_user() {
 # 获取订阅类型名称
 get_sub_type_name() {
     case $1 in
-        1) echo "通用订阅 (Base64)" ;;
-        2) echo "原始订阅 (纯文本)" ;;
-        3) echo "Clash订阅 (YAML)" ;;
+        1|general) echo "通用订阅 (Base64)" ;;
+        2|raw) echo "原始订阅 (纯文本)" ;;
+        3|clash) echo "Clash订阅 (YAML)" ;;
         *) echo "未知类型" ;;
     esac
 }
@@ -1478,13 +1423,13 @@ show_subscription() {
 
         local name=$(echo "$sub" | jq -r '.name')
         local url=$(echo "$sub" | jq -r '.url')
-        local type=$(echo "$sub" | jq -r '.type // "1"')
         local user=$(echo "$sub" | jq -r '.user // "N/A"')
-        local type_name=$(get_sub_type_name "$type")
 
-        # 从元数据获取user_id
+        # 从元数据获取user_id和type
         local metadata=$(get_subscription_metadata "$name")
         local user_id=$(echo "$metadata" | jq -r '.user_id // empty')
+        local type=$(echo "$metadata" | jq -r '.type // "unknown"')
+        local type_name=$(get_sub_type_name "$type")
 
         local expire_display="无限期"
         local traffic_display="无限"
@@ -1521,6 +1466,87 @@ show_subscription() {
         ((index++))
     done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
 
+    echo ""
+}
+
+# 查看订阅链接(显示实际访问URL)
+show_subscription_links() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          订阅链接查看                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 先显示订阅列表
+    show_subscription
+
+    local sub_db="${DATA_DIR}/subscriptions.json"
+    if [[ ! -f "$sub_db" ]]; then
+        return 0
+    fi
+
+    local sub_count=$(jq -r '.subscriptions | length' "$sub_db" 2>/dev/null || echo "0")
+    if [[ "$sub_count" -eq 0 ]]; then
+        return 0
+    fi
+
+    # 获取服务器IP
+    local server_ip=$(get_server_ip)
+    if [[ -z "$server_ip" ]]; then
+        print_error "无法获取服务器IP"
+        return 1
+    fi
+
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}订阅访问链接：${NC}"
+    echo ""
+
+    local index=1
+    while read -r sub; do
+        if [[ -z "$sub" || "$sub" == "null" ]]; then
+            continue
+        fi
+
+        local name=$(echo "$sub" | jq -r '.name')
+        local url=$(echo "$sub" | jq -r '.url // empty')
+
+        # 从元数据获取类型
+        local metadata=$(get_subscription_metadata "$name")
+        local type=$(echo "$metadata" | jq -r '.type // "general"')
+        local user_id=$(echo "$metadata" | jq -r '.user_id // empty')
+
+        # 获取用户名
+        local username="N/A"
+        if [[ -n "$user_id" ]]; then
+            username=$(jq -r ".users[] | select(.id == \"$user_id\") | .username" "$USERS_FILE" 2>/dev/null)
+        fi
+
+        # 构建访问URL
+        local access_url=""
+        case "$type" in
+            general|1)
+                access_url="http://${server_ip}:${HTTP_PORT:-80}/subscriptions/${name}.txt"
+                ;;
+            raw|2)
+                access_url="http://${server_ip}:${HTTP_PORT:-80}/subscriptions/${name}_raw.txt"
+                ;;
+            clash|3)
+                access_url="http://${server_ip}:${HTTP_PORT:-80}/subscriptions/${name}_clash.yaml"
+                ;;
+        esac
+
+        echo -e "${YELLOW}[$index] $name${NC} (用户: ${CYAN}$username${NC})"
+        if [[ -n "$access_url" ]]; then
+            echo -e "    ${GREEN}$access_url${NC}"
+        else
+            echo -e "    ${RED}无法生成URL${NC}"
+        fi
+        echo ""
+        ((index++))
+    done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
+
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }
 

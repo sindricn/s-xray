@@ -1089,11 +1089,17 @@ unbind_nodes_from_user_smart() {
             local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
             if [[ -n "$node" && "$node" != "null" ]]; then
                 ((node_index++))
+                local name=$(echo "$node" | jq -r '.name // "未命名"')
                 local protocol=$(echo "$node" | jq -r '.protocol // "unknown"')
                 local transport=$(echo "$node" | jq -r '.transport // "N/A"')
                 local security=$(echo "$node" | jq -r '.security // "N/A"')
+                local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
 
-                echo -e "  ${CYAN}[$node_index]${NC} 端口 ${YELLOW}$port${NC} ($protocol/$transport/$security)"
+                echo -e "  ${CYAN}[$node_index]${NC} ${YELLOW}$name${NC}"
+                echo -e "      端口: ${YELLOW}$port${NC} | 协议: ${YELLOW}$protocol${NC} | 传输: ${YELLOW}$transport${NC} | 安全: ${YELLOW}$security${NC}"
+                if [[ -n "$outbound_tag" ]]; then
+                    echo -e "      出站: ${GREEN}$outbound_tag${NC}"
+                fi
                 bound_nodes+=("$port")
             fi
         fi
