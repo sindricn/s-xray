@@ -717,7 +717,8 @@ debug_user_traffic() {
     echo "查询名称: $uplink_name"
     local uplink_response=$(xray api statsquery --server=$api_addr --name "$uplink_name" 2>/dev/null)
     echo "API 响应: $uplink_response"
-    local uplink=$(echo "$uplink_response" | jq -r '.stat.value // 0' 2>/dev/null)
+    local uplink=$(echo "$uplink_response" | grep "value" | awk '{print $2}' | tr -d '\r')
+    uplink=${uplink:-0}
     echo "上行流量: $uplink 字节"
     echo ""
 
@@ -727,7 +728,8 @@ debug_user_traffic() {
     echo "查询名称: $downlink_name"
     local downlink_response=$(xray api statsquery --server=$api_addr --name "$downlink_name" 2>/dev/null)
     echo "API 响应: $downlink_response"
-    local downlink=$(echo "$downlink_response" | jq -r '.stat.value // 0' 2>/dev/null)
+    local downlink=$(echo "$downlink_response" | grep "value" | awk '{print $2}' | tr -d '\r')
+    downlink=${downlink:-0}
     echo "下行流量: $downlink 字节"
     echo ""
 
@@ -759,10 +761,12 @@ check_user_has_traffic() {
     fi
 
     # 查询上行流量
-    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
+    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    uplink=${uplink:-0}
 
     # 查询下行流量
-    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
+    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    downlink=${downlink:-0}
 
     # 检查是否有流量数据
     if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
@@ -851,10 +855,12 @@ get_user_traffic_summary() {
     fi
 
     # 查询上行流量
-    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
+    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    uplink=${uplink:-0}
 
     # 查询下行流量
-    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
+    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    downlink=${downlink:-0}
 
     # 转换为人类可读格式
     local uplink_mb=$((uplink / 1048576))
