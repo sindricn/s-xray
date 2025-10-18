@@ -212,6 +212,14 @@ generate_xray_config() {
     }')
     inbounds=$(echo "$inbounds" | jq ". += [$api_inbound]")
 
+    # 添加 API 路由规则 (将 API inbound 连接到 API outbound)
+    local api_routing_rule=$(jq -n '{
+        type: "field",
+        inboundTag: ["api"],
+        outboundTag: "api"
+    }')
+    routing_rules=$(echo "$routing_rules" | jq ". = [$api_routing_rule] + .")
+
     # 生成完整配置
     local full_config=$(jq -n \
         --argjson inbounds "$inbounds" \
