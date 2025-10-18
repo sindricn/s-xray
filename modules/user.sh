@@ -694,23 +694,30 @@ debug_user_traffic() {
     echo "用户邮箱: $email"
     echo ""
 
-    # 检查 API 连接
+    # 检查 API 端口监听
     echo "检查 API 可用性..."
-    if nc -z 127.0.0.1 10085 2>/dev/null; then
-        echo "✓ API 端口 10085 可访问"
+    if ss -lnt 2>/dev/null | grep -q ":10085 " || netstat -lnt 2>/dev/null | grep -q ":10085 "; then
+        echo "✓ API 端口 10085 正在监听"
     else
-        echo "✗ API 端口 10085 不可访问"
+        echo "✗ API 端口 10085 未监听"
         return 1
     fi
+
+    # 检查 xray 命令
+    if ! command -v xray &>/dev/null; then
+        echo "✗ xray 命令不可用"
+        return 1
+    fi
+    echo "✓ xray 命令可用"
     echo ""
 
     # 查询上行流量
     echo "查询上行流量..."
     local uplink_name="user>>>${email}>>>traffic>>>uplink"
     echo "查询名称: $uplink_name"
-    local uplink_response=$(curl -s "http://${api_addr}/stats/query?pattern=${uplink_name}&reset=false" 2>/dev/null)
+    local uplink_response=$(xray api statsquery --server=$api_addr --name "$uplink_name" 2>/dev/null)
     echo "API 响应: $uplink_response"
-    local uplink=$(echo "$uplink_response" | jq -r '.stat.value // 0')
+    local uplink=$(echo "$uplink_response" | jq -r '.stat.value // 0' 2>/dev/null)
     echo "上行流量: $uplink 字节"
     echo ""
 
@@ -718,9 +725,9 @@ debug_user_traffic() {
     echo "查询下行流量..."
     local downlink_name="user>>>${email}>>>traffic>>>downlink"
     echo "查询名称: $downlink_name"
-    local downlink_response=$(curl -s "http://${api_addr}/stats/query?pattern=${downlink_name}&reset=false" 2>/dev/null)
+    local downlink_response=$(xray api statsquery --server=$api_addr --name "$downlink_name" 2>/dev/null)
     echo "API 响应: $downlink_response"
-    local downlink=$(echo "$downlink_response" | jq -r '.stat.value // 0')
+    local downlink=$(echo "$downlink_response" | jq -r '.stat.value // 0' 2>/dev/null)
     echo "下行流量: $downlink 字节"
     echo ""
 
@@ -739,19 +746,23 @@ check_user_has_traffic() {
     local email=$1
     local api_addr="127.0.0.1:10085"
 
-    # 检查 API 是否可用
-    if ! command -v nc &>/dev/null || ! nc -z 127.0.0.1 10085 2>/dev/null; then
+    # 检查 API 端口是否在监听
+    if ! ss -lnt 2>/dev/null | grep -q ":10085 " && ! netstat -lnt 2>/dev/null | grep -q ":10085 "; then
+        echo "unknown"
+        return
+    fi
+
+    # 检查 xray 命令是否可用
+    if ! command -v xray &>/dev/null; then
         echo "unknown"
         return
     fi
 
     # 查询上行流量
-    local uplink_name="user>>>${email}>>>traffic>>>uplink"
-    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=${uplink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
+    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
 
     # 查询下行流量
-    local downlink_name="user>>>${email}>>>traffic>>>downlink"
-    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=${downlink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
+    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
 
     # 检查是否有流量数据
     if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
@@ -790,21 +801,21 @@ get_user_online_status() {
     # 检查流量记录
     local has_traffic=$(check_user_has_traffic "$email")
 
-    if [[ "$has_traffic" == "no" ]]; then
-        echo "never"  # 从未连接
-        return
-    elif [[ "$has_traffic" == "unknown" ]]; then
+    if [[ "$has_traffic" == "unknown" ]]; then
         echo "unknown"  # API 不可用
+        return
+    elif [[ "$has_traffic" == "yes" ]]; then
+        echo "online"  # 有流量即认为在线
         return
     fi
 
-    # 检查节点连接
+    # 没有流量记录时,检查端口是否有活跃连接
     local has_conn=$(check_port_has_connections "$port")
 
     if [[ "$has_conn" == "yes" ]]; then
-        echo "online"  # 可能在线
+        echo "online"  # 端口有连接,可能刚连接还没产生流量
     else
-        echo "offline"  # 离线
+        echo "offline"  # 既无流量也无连接,确认离线
     fi
 }
 
@@ -827,19 +838,23 @@ get_user_traffic_summary() {
     local email=$1
     local api_addr="127.0.0.1:10085"
 
-    # 检查 API 是否可用
-    if ! command -v nc &>/dev/null || ! nc -z 127.0.0.1 10085 2>/dev/null; then
+    # 检查 API 端口是否在监听
+    if ! ss -lnt 2>/dev/null | grep -q ":10085 " && ! netstat -lnt 2>/dev/null | grep -q ":10085 "; then
+        echo "N/A"
+        return
+    fi
+
+    # 检查 xray 命令是否可用
+    if ! command -v xray &>/dev/null; then
         echo "N/A"
         return
     fi
 
     # 查询上行流量
-    local uplink_name="user>>>${email}>>>traffic>>>uplink"
-    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=${uplink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
+    local uplink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
 
     # 查询下行流量
-    local downlink_name="user>>>${email}>>>traffic>>>downlink"
-    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=${downlink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
+    local downlink=$(xray api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0' 2>/dev/null)
 
     # 转换为人类可读格式
     local uplink_mb=$((uplink / 1048576))
