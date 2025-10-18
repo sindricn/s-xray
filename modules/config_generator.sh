@@ -156,15 +156,11 @@ generate_xray_config() {
         {
             protocol: "blackhole",
             tag: "block"
-        },
-        {
-            protocol: "dokodemo-door",
-            tag: "api",
-            settings: {
-                address: "127.0.0.1"
-            }
         }
     ]')
+
+    # 注意: API outbound 由 Xray 自动创建，不需要手动添加
+    # 参考文档: "当 api 配置开启时，Xray 会自建一个和 tag 同名的出站代理"
 
     # 生成路由规则
     local routing_rules="[]"
