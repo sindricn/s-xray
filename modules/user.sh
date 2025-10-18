@@ -732,11 +732,14 @@ check_port_has_connections() {
 
     # 使用 ss 或 netstat 检查
     if command -v ss &>/dev/null; then
-        if ss -tn 2>/dev/null | grep -q ":${port}.*ESTABLISHED"; then
+        # ss 显示 ESTAB 而不是 ESTABLISHED
+        # 使用空格确保端口号完全匹配(避免443匹配到4430)
+        if ss -tn 2>/dev/null | grep -q "ESTAB.*:${port} "; then
             echo "yes"
             return
         fi
     elif command -v netstat &>/dev/null; then
+        # netstat 显示 ESTABLISHED
         if netstat -tn 2>/dev/null | grep -q ":${port}.*ESTABLISHED"; then
             echo "yes"
             return
