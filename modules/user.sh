@@ -685,65 +685,6 @@ update_user_level() {
 # 用户在线状态检测
 #================================================================
 
-# 调试函数：显示用户流量详情
-debug_user_traffic() {
-    local email=$1
-    local api_addr="127.0.0.1:10085"
-
-    echo "========== 调试信息 =========="
-    echo "用户邮箱: $email"
-    echo ""
-
-    # 检查 API 端口监听
-    echo "检查 API 可用性..."
-    if ss -lnt 2>/dev/null | grep -q ":10085 " || netstat -lnt 2>/dev/null | grep -q ":10085 "; then
-        echo "✓ API 端口 10085 正在监听"
-    else
-        echo "✗ API 端口 10085 未监听"
-        return 1
-    fi
-
-    # 检查 xray 命令
-    local xray_bin="/usr/local/xray/xray"
-    if [[ ! -x "$xray_bin" ]]; then
-        echo "✗ xray 命令不可用: $xray_bin"
-        return 1
-    fi
-    echo "✓ xray 命令可用: $xray_bin"
-    echo ""
-
-    # 查询上行流量
-    echo "查询上行流量..."
-    local uplink_name="user>>>${email}>>>traffic>>>uplink"
-    echo "查询名称: $uplink_name"
-    local uplink_response=$($xray_bin api statsquery --server=$api_addr --name "$uplink_name" 2>/dev/null)
-    echo "API 响应: $uplink_response"
-    local uplink=$(echo "$uplink_response" | grep "value" | awk '{print $2}' | tr -d '\r')
-    uplink=${uplink:-0}
-    echo "上行流量: $uplink 字节"
-    echo ""
-
-    # 查询下行流量
-    echo "查询下行流量..."
-    local downlink_name="user>>>${email}>>>traffic>>>downlink"
-    echo "查询名称: $downlink_name"
-    local downlink_response=$($xray_bin api statsquery --server=$api_addr --name "$downlink_name" 2>/dev/null)
-    echo "API 响应: $downlink_response"
-    local downlink=$(echo "$downlink_response" | grep "value" | awk '{print $2}' | tr -d '\r')
-    downlink=${downlink:-0}
-    echo "下行流量: $downlink 字节"
-    echo ""
-
-    # 总结
-    echo "流量总计: ↑${uplink} ↓${downlink}"
-    if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
-        echo "状态: 有流量记录"
-    else
-        echo "状态: 无流量记录"
-    fi
-    echo "============================="
-}
-
 # 检查用户是否有流量记录
 check_user_has_traffic() {
     local email=$1
