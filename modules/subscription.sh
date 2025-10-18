@@ -45,31 +45,25 @@ init_subscription_metadata() {
 # 参数: sub_name, expire_date, traffic_limit_gb, traffic_used_gb, user_id
 save_subscription_metadata() {
     local sub_name="$1"
-    local expire_date="$2"        # 格式: YYYY-MM-DD 或 "unlimited"
-    local traffic_limit_gb="$3"   # 流量限制(GB) 或 "unlimited"
-    local traffic_used_gb="${4:-0}"  # 已使用流量(GB)，默认0
-    local user_id="${5:-}"        # 用户ID
-    local sub_type="${6:-}"       # 订阅类型
+    local user_id="$2"        # 用户ID
+    local sub_type="$3"       # 订阅类型
 
     init_subscription_metadata
 
     local metadata=$(jq -n \
         --arg name "$sub_name" \
-        --arg expire "$expire_date" \
-        --arg limit "$traffic_limit_gb" \
-        --arg used "$traffic_used_gb" \
         --arg user_id "$user_id" \
         --arg type "$sub_type" \
         --arg created "$(date '+%Y-%m-%d %H:%M:%S')" \
         --arg updated "$(date '+%Y-%m-%d %H:%M:%S')" \
-        '{name: $name, expire_date: $expire, traffic_limit_gb: $limit, traffic_used_gb: $used, user_id: $user_id, type: $type, created: $created, updated: $updated}')
+        '{name: $name, user_id: $user_id, type: $type, created: $created, updated: $updated}')
 
     # 检查订阅是否已存在
     local existing=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
 
     if [[ -n "$existing" ]]; then
         # 更新现有元数据
-        jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {expire_date: \"$expire_date\", traffic_limit_gb: \"$traffic_limit_gb\", traffic_used_gb: \"$traffic_used_gb\", type: \"$sub_type\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
+        jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {type: \"$sub_type\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
             "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
     else
         # 添加新元数据
@@ -1335,8 +1329,8 @@ generate_subscription_with_user() {
     # 保存订阅信息到数据库
     save_subscription_info "$sub_name" "$sub_url" "$sub_file" "$sub_type" "$sub_user_email"
 
-    # 保存订阅元数据（有效期和流量限制）
-    save_subscription_metadata "$sub_name" "$expire_date" "$traffic_limit" "$traffic_used" "$sub_user_id" "$sub_type"
+    # 保存订阅元数据（用户ID和订阅类型）
+    save_subscription_metadata "$sub_name" "$sub_user_id" "$sub_type"
 
     # 启动订阅服务
     setup_subscription_server "$sub_port"
@@ -1488,30 +1482,37 @@ show_subscription() {
         local user=$(echo "$sub" | jq -r '.user // "N/A"')
         local type_name=$(get_sub_type_name "$type")
 
-        # 获取元数据
+        # 从元数据获取user_id
         local metadata=$(get_subscription_metadata "$name")
+        local user_id=$(echo "$metadata" | jq -r '.user_id // empty')
+
         local expire_display="无限期"
         local traffic_display="无限"
 
-        if [[ -n "$metadata" && "$metadata" != "{}" ]]; then
-            local expire_date=$(echo "$metadata" | jq -r '.expire_date // "unlimited"')
-            local traffic_limit=$(echo "$metadata" | jq -r '.traffic_limit_gb // "unlimited"')
-            local traffic_used=$(echo "$metadata" | jq -r '.traffic_used_gb // "0"')
+        # 从用户信息读取流量和有效期
+        if [[ -n "$user_id" ]]; then
+            local user_info=$(jq -r ".users[] | select(.id == \"$user_id\")" "$USERS_FILE" 2>/dev/null)
+            if [[ -n "$user_info" && "$user_info" != "null" ]]; then
+                local expire_date=$(echo "$user_info" | jq -r '.expire_date // "unlimited"')
+                local traffic_limit=$(echo "$user_info" | jq -r '.traffic_limit_gb // "unlimited"')
+                local traffic_used=$(echo "$user_info" | jq -r '.traffic_used_gb // "0"')
 
-            if [[ "$expire_date" != "unlimited" ]]; then
-                # 检查是否过期
-                if is_subscription_expired "$name"; then
-                    expire_display="${expire_date}(已过期)"
-                else
-                    expire_display="$expire_date"
+                if [[ "$expire_date" != "unlimited" ]]; then
+                    # 检查是否过期
+                    local today=$(date +%Y-%m-%d)
+                    if [[ "$expire_date" < "$today" ]]; then
+                        expire_display="${expire_date}(已过期)"
+                    else
+                        expire_display="$expire_date"
+                    fi
                 fi
-            fi
 
-            if [[ "$traffic_limit" != "unlimited" ]]; then
-                traffic_display="${traffic_used}/${traffic_limit}GB"
-                # 检查是否超限
-                if is_subscription_traffic_exceeded "$name"; then
-                    traffic_display="${traffic_display}(超限)"
+                if [[ "$traffic_limit" != "unlimited" ]]; then
+                    traffic_display="${traffic_used}/${traffic_limit}GB"
+                    # 检查是否超限
+                    if (( $(echo "$traffic_used >= $traffic_limit" | bc -l 2>/dev/null || echo 0) )); then
+                        traffic_display="${traffic_display}(超限)"
+                    fi
                 fi
             fi
         fi

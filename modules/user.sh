@@ -290,11 +290,17 @@ show_user_detail() {
                 node_found=true
                 # 获取节点详细信息
                 local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE")
+                local name=$(echo "$node" | jq -r '.name // "未命名"')
                 local transport=$(echo "$node" | jq -r '.transport // "未知"')
                 local security=$(echo "$node" | jq -r '.security // "未知"')
+                local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
 
-                echo -e "  ${CYAN}•${NC} 端口 $port ($protocol)"
-                echo -e "    传输: $transport | 安全: $security"
+                echo -e "  ${CYAN}•${NC} $name"
+                echo -e "    端口: ${YELLOW}$port${NC} | 协议: ${YELLOW}$protocol${NC}"
+                echo -e "    传输: ${YELLOW}$transport${NC} | 安全: ${YELLOW}$security${NC}"
+                if [[ -n "$outbound_tag" ]]; then
+                    echo -e "    出站: ${GREEN}$outbound_tag${NC}"
+                fi
             fi
         done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
 
