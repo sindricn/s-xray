@@ -893,6 +893,7 @@ bind_nodes_to_user_smart() {
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}已绑定节点：${NC}"
+    echo ""
     local has_bound=false
     local bound_ports=()
 
@@ -903,9 +904,17 @@ bind_nodes_to_user_smart() {
         if echo "$users" | grep -q "$uuid"; then
             local node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
             if [[ -n "$node" && "$node" != "null" ]]; then
+                local name=$(echo "$node" | jq -r '.name // "未命名"')
                 local protocol=$(echo "$node" | jq -r '.protocol')
-                local transport=$(echo "$node" | jq -r '.transport')
-                echo -e "  ${YELLOW}✓${NC} 端口 ${GREEN}$port${NC} ($protocol/$transport)"
+                local transport=$(echo "$node" | jq -r '.transport // "N/A"')
+                local security=$(echo "$node" | jq -r '.security // "N/A"')
+                local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
+
+                echo -e "  ${YELLOW}✓${NC} ${GREEN}$name${NC}"
+                echo -e "    端口: ${YELLOW}$port${NC} | 协议: ${YELLOW}$protocol${NC} | 传输: ${YELLOW}$transport${NC} | 安全: ${YELLOW}$security${NC}"
+                if [[ -n "$outbound_tag" ]]; then
+                    echo -e "    出站: ${GREEN}$outbound_tag${NC}"
+                fi
                 has_bound=true
                 bound_ports+=("$port")
             fi
@@ -919,14 +928,18 @@ bind_nodes_to_user_smart() {
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}未绑定节点：${NC}"
+    echo ""
     local has_unbound=false
     local node_count=0
 
     while IFS= read -r node; do
         ((node_count++))
         local port=$(echo "$node" | jq -r '.port')
+        local name=$(echo "$node" | jq -r '.name // "未命名"')
         local protocol=$(echo "$node" | jq -r '.protocol')
-        local transport=$(echo "$node" | jq -r '.transport')
+        local transport=$(echo "$node" | jq -r '.transport // "N/A"')
+        local security=$(echo "$node" | jq -r '.security // "N/A"')
+        local outbound_tag=$(echo "$node" | jq -r '.outbound_tag // empty')
 
         # 检查是否已绑定
         local is_bound=false
@@ -938,7 +951,11 @@ bind_nodes_to_user_smart() {
         done
 
         if [[ "$is_bound" == "false" ]]; then
-            echo -e "  ${CYAN}[$node_count]${NC} 端口 ${YELLOW}$port${NC} ($protocol/$transport)"
+            echo -e "  ${CYAN}[$node_count]${NC} ${YELLOW}$name${NC}"
+            echo -e "      端口: ${YELLOW}$port${NC} | 协议: ${YELLOW}$protocol${NC} | 传输: ${YELLOW}$transport${NC} | 安全: ${YELLOW}$security${NC}"
+            if [[ -n "$outbound_tag" ]]; then
+                echo -e "      出站: ${GREEN}$outbound_tag${NC}"
+            fi
             has_unbound=true
         fi
     done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)

@@ -1491,7 +1491,7 @@ show_subscription_links() {
     fi
 
     # 获取服务器IP
-    local server_ip=$(get_server_ip)
+    local server_ip=$(get_public_ip)
     if [[ -z "$server_ip" ]]; then
         print_error "无法获取服务器IP"
         return 1
