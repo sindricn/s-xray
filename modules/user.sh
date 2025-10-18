@@ -685,20 +685,73 @@ update_user_level() {
 # 用户在线状态检测
 #================================================================
 
+# 调试函数：显示用户流量详情
+debug_user_traffic() {
+    local email=$1
+    local api_addr="127.0.0.1:10085"
+
+    echo "========== 调试信息 =========="
+    echo "用户邮箱: $email"
+    echo ""
+
+    # 检查 API 连接
+    echo "检查 API 可用性..."
+    if nc -z 127.0.0.1 10085 2>/dev/null; then
+        echo "✓ API 端口 10085 可访问"
+    else
+        echo "✗ API 端口 10085 不可访问"
+        return 1
+    fi
+    echo ""
+
+    # 查询上行流量
+    echo "查询上行流量..."
+    local uplink_name="user>>>${email}>>>traffic>>>uplink"
+    echo "查询名称: $uplink_name"
+    local uplink_response=$(curl -s "http://${api_addr}/stats/query?pattern=${uplink_name}&reset=false" 2>/dev/null)
+    echo "API 响应: $uplink_response"
+    local uplink=$(echo "$uplink_response" | jq -r '.stat.value // 0')
+    echo "上行流量: $uplink 字节"
+    echo ""
+
+    # 查询下行流量
+    echo "查询下行流量..."
+    local downlink_name="user>>>${email}>>>traffic>>>downlink"
+    echo "查询名称: $downlink_name"
+    local downlink_response=$(curl -s "http://${api_addr}/stats/query?pattern=${downlink_name}&reset=false" 2>/dev/null)
+    echo "API 响应: $downlink_response"
+    local downlink=$(echo "$downlink_response" | jq -r '.stat.value // 0')
+    echo "下行流量: $downlink 字节"
+    echo ""
+
+    # 总结
+    echo "流量总计: ↑${uplink} ↓${downlink}"
+    if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
+        echo "状态: 有流量记录"
+    else
+        echo "状态: 无流量记录"
+    fi
+    echo "============================="
+}
+
 # 检查用户是否有流量记录
 check_user_has_traffic() {
     local email=$1
     local api_addr="127.0.0.1:10085"
 
     # 检查 API 是否可用
-    if ! nc -z 127.0.0.1 10085 2>/dev/null; then
+    if ! command -v nc &>/dev/null || ! nc -z 127.0.0.1 10085 2>/dev/null; then
         echo "unknown"
         return
     fi
 
-    # 查询流量统计
-    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0')
-    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0')
+    # 查询上行流量
+    local uplink_name="user>>>${email}>>>traffic>>>uplink"
+    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=${uplink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
+
+    # 查询下行流量
+    local downlink_name="user>>>${email}>>>traffic>>>downlink"
+    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=${downlink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
 
     # 检查是否有流量数据
     if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
@@ -775,14 +828,18 @@ get_user_traffic_summary() {
     local api_addr="127.0.0.1:10085"
 
     # 检查 API 是否可用
-    if ! nc -z 127.0.0.1 10085 2>/dev/null; then
+    if ! command -v nc &>/dev/null || ! nc -z 127.0.0.1 10085 2>/dev/null; then
         echo "N/A"
         return
     fi
 
-    # 查询流量统计
-    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>uplink" 2>/dev/null | jq -r '.stat.value // 0')
-    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=user>>>${email}>>>traffic>>>downlink" 2>/dev/null | jq -r '.stat.value // 0')
+    # 查询上行流量
+    local uplink_name="user>>>${email}>>>traffic>>>uplink"
+    local uplink=$(curl -s "http://${api_addr}/stats/query?pattern=${uplink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
+
+    # 查询下行流量
+    local downlink_name="user>>>${email}>>>traffic>>>downlink"
+    local downlink=$(curl -s "http://${api_addr}/stats/query?pattern=${downlink_name}&reset=false" 2>/dev/null | jq -r '.stat.value // 0')
 
     # 转换为人类可读格式
     local uplink_mb=$((uplink / 1048576))

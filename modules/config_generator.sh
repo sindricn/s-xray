@@ -200,6 +200,18 @@ generate_xray_config() {
         outboundTag: "block"
     }]')
 
+    # 添加 API inbound
+    local api_inbound=$(jq -n '{
+        tag: "api",
+        listen: "127.0.0.1",
+        port: 10085,
+        protocol: "dokodemo-door",
+        settings: {
+            address: "127.0.0.1"
+        }
+    }')
+    inbounds=$(echo "$inbounds" | jq ". += [$api_inbound]")
+
     # 生成完整配置
     local full_config=$(jq -n \
         --argjson inbounds "$inbounds" \
