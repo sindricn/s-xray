@@ -138,12 +138,36 @@ fi
 
 echo "尝试查询所有统计数据..."
 echo "执行命令: $XRAY_BIN api statsquery --server=$API_ADDR -pattern \"\""
-stats_output=$($XRAY_BIN api statsquery --server=$API_ADDR -pattern "" 2>&1 || true)
+
+# 使用临时文件捕获输出和错误
+temp_output=$(mktemp)
+temp_error=$(mktemp)
+
+set +e  # 临时关闭错误退出
+$XRAY_BIN api statsquery --server=$API_ADDR -pattern "" > "$temp_output" 2> "$temp_error"
 stats_exit_code=$?
+set -e  # 恢复错误退出
+
+stats_output=$(cat "$temp_output")
+stats_error=$(cat "$temp_error")
+rm -f "$temp_output" "$temp_error"
+
 echo "命令退出码: $stats_exit_code"
 
+if [[ $stats_exit_code -ne 0 ]]; then
+    echo -e "${RED}✗ Stats API 查询失败${NC}"
+    if [[ -n "$stats_error" ]]; then
+        echo "错误信息："
+        echo "$stats_error"
+    fi
+fi
+
 if [[ -n "$stats_output" ]]; then
-    echo -e "${GREEN}✓ Stats API 响应成功${NC}"
+    echo -e "${GREEN}✓ Stats API 有响应${NC}"
+
+    # 统计行数
+    line_count=$(echo "$stats_output" | wc -l)
+    echo "返回了 $line_count 行数据"
     echo ""
     echo "统计数据示例（前20行）:"
     echo "$stats_output" | head -20
@@ -156,49 +180,84 @@ if [[ -n "$stats_output" ]]; then
         echo "用户流量统计："
         echo "$stats_output" | grep "user>>>.*>>>traffic" | head -10
     else
-        echo -e "${RED}✗ 没有发现用户流量统计${NC}"
+        echo -e "${YELLOW}⚠ 没有发现用户流量统计${NC}"
         echo "可能原因："
-        echo "  1. 用户还没有产生任何流量"
+        echo "  1. 用户还没有产生任何流量（最常见）"
         echo "  2. 用户配置缺少 email 字段"
         echo "  3. policy 中的统计未正确启用"
+        echo ""
+        echo "建议："
+        echo "  - 让用户连接节点并产生一些流量"
+        echo "  - 然后重新运行此诊断脚本"
     fi
 else
-    echo -e "${RED}✗ Stats API 无响应${NC}"
-    echo "可能原因："
-    echo "  1. API 端口未正确监听"
-    echo "  2. StatsService 未启用"
-    echo "  3. Xray 版本不支持 stats"
+    echo -e "${YELLOW}⚠ Stats API 返回空数据${NC}"
+    echo "这通常表示："
+    echo "  1. Xray 刚启动，还没有任何统计数据"
+    echo "  2. 用户还没有连接或产生流量"
+    echo ""
+    echo "这是正常的！请让用户连接并使用一段时间后再检查。"
 fi
 echo ""
 
 # 8. 测试查询特定用户
 echo -e "${YELLOW}[8/8] 测试查询特定用户流量${NC}"
 # 获取第一个有 email 的用户
-first_email=$(jq -r '[.inbounds[].settings.clients[]? | select(.email != null) | .email] | first // ""' "$XRAY_CONFIG")
+first_email=$(jq -r '[.inbounds[].settings.clients[]? | select(.email != null) | .email] | first // ""' "$XRAY_CONFIG" 2>/dev/null)
 
-if [[ -n "$first_email" && "$first_email" != "null" ]]; then
+if [[ -n "$first_email" && "$first_email" != "null" && "$first_email" != "" ]]; then
     echo "测试用户: $first_email"
+    echo "查询命令: $XRAY_BIN api statsquery --server=$API_ADDR --name \"user>>>${first_email}>>>traffic>>>uplink\""
 
-    uplink=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r' || echo "0")
-    downlink=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r' || echo "0")
+    set +e  # 临时关闭错误退出
 
+    # 查询上行流量
+    uplink_raw=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>uplink" 2>/dev/null)
+    uplink=$(echo "$uplink_raw" | grep "value" | awk '{print $2}' | tr -d '\r' | head -1)
     uplink=${uplink:-0}
-    downlink=${downlink:-0}
+    [[ ! "$uplink" =~ ^[0-9]+$ ]] && uplink=0
 
-    echo "  上行流量: $uplink 字节"
-    echo "  下行流量: $downlink 字节"
+    # 查询下行流量
+    downlink_raw=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>downlink" 2>/dev/null)
+    downlink=$(echo "$downlink_raw" | grep "value" | awk '{print $2}' | tr -d '\r' | head -1)
+    downlink=${downlink:-0}
+    [[ ! "$downlink" =~ ^[0-9]+$ ]] && downlink=0
+
+    set -e  # 恢复错误退出
+
+    echo "  API 原始响应（uplink）:"
+    if [[ -n "$uplink_raw" ]]; then
+        echo "$uplink_raw" | head -3
+    else
+        echo "    (无响应)"
+    fi
+
+    echo ""
+    echo "  解析结果："
+    echo "    上行流量: $uplink 字节 ($(awk "BEGIN {printf \"%.2f\", $uplink/1048576}") MB)"
+    echo "    下行流量: $downlink 字节 ($(awk "BEGIN {printf \"%.2f\", $downlink/1048576}") MB)"
+    echo ""
 
     if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
         echo -e "${GREEN}✓ 该用户有流量记录${NC}"
+        echo -e "${GREEN}  Stats API 工作正常！${NC}"
     else
         echo -e "${YELLOW}⚠ 该用户流量为 0${NC}"
-        echo "  如果用户已经连接，可能需要："
-        echo "  1. 确认用户确实产生了流量"
-        echo "  2. 检查 policy 配置是否正确"
-        echo "  3. 重启 Xray 服务使配置生效"
+        echo ""
+        echo "  可能的原因："
+        echo "  1. 用户还没有连接并产生流量（最常见原因）"
+        echo "  2. Xray 刚重启，统计数据被清空"
+        echo "  3. 用户连接了但没有实际传输数据"
+        echo ""
+        echo "  建议操作："
+        echo "  1. 使用该用户的订阅链接连接节点"
+        echo "  2. 打开网页或进行一些网络活动"
+        echo "  3. 等待 10-30 秒后重新运行此诊断脚本"
+        echo "  4. 如果仍然为 0，可能需要检查客户端配置或重启 Xray"
     fi
 else
     echo -e "${YELLOW}⚠ 未找到有 email 的用户，跳过测试${NC}"
+    echo "请先添加用户或检查用户配置中的 email 字段"
 fi
 echo ""
 
