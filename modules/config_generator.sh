@@ -142,7 +142,7 @@ generate_xray_config() {
             # 添加到inbounds列表
             inbounds=$(echo "$inbounds" | jq ". += [$inbound]")
 
-        done < <(jq -c '.nodes[]' "$nodes_file")
+        done < <(jq -c '.nodes[]' "$nodes_file" 2>/dev/null)
     fi
 
     # 读取用户配置的出站规则
@@ -202,7 +202,7 @@ generate_xray_config() {
                 }')
         fi
         routing_rules=$(echo "$routing_rules" | jq ". += [$rule]")
-    done < <(jq -c '.nodes[]' "$nodes_file")
+    done < <(jq -c '.nodes[]' "$nodes_file" 2>/dev/null)
 
     # 添加默认路由规则（阻止私有IP,必须放在最后）
     routing_rules=$(echo "$routing_rules" | jq '. += [{

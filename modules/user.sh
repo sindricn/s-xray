@@ -149,7 +149,7 @@ list_global_users() {
         fi
 
         printf "${CYAN}║${NC} %-12s %-14s %-16s %-18s %-8b %-10b ${CYAN}║${NC}\n" "$username" "$short_password" "$short_email" "$short_uuid" "$status" "$online_status"
-    done < <(jq -c '.users[]' "$USERS_FILE")
+    done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
 
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo -e "${CYAN}总计: ${user_count} 个用户${NC}"
@@ -712,10 +712,14 @@ check_user_has_traffic() {
     # 查询上行流量
     local uplink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     uplink=${uplink:-0}
+    # 确保是数字
+    [[ ! "$uplink" =~ ^[0-9]+$ ]] && uplink=0
 
     # 查询下行流量
     local downlink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     downlink=${downlink:-0}
+    # 确保是数字
+    [[ ! "$downlink" =~ ^[0-9]+$ ]] && downlink=0
 
     # 检查是否有流量数据
     if [[ "$uplink" -gt 0 ]] || [[ "$downlink" -gt 0 ]]; then
@@ -895,10 +899,14 @@ get_user_traffic_summary() {
     # 查询上行流量
     local uplink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     uplink=${uplink:-0}
+    # 确保是数字
+    [[ ! "$uplink" =~ ^[0-9]+$ ]] && uplink=0
 
     # 查询下行流量
     local downlink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
     downlink=${downlink:-0}
+    # 确保是数字
+    [[ ! "$downlink" =~ ^[0-9]+$ ]] && downlink=0
 
     # 转换为人类可读格式
     local uplink_mb=$((uplink / 1048576))
@@ -1012,7 +1020,7 @@ show_online_users() {
         else
             [[ "$debug_mode" == "true" ]] && echo "  ${GRAY}未显示: status=$status${NC}"
         fi
-    done < <(jq -c '.users[]' "$USERS_FILE")
+    done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
 
     echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""

@@ -208,7 +208,7 @@ show_user_node_bindings() {
             done <<< "$users"
         fi
         echo ""
-    done < <(jq -c '.bindings[]' "$NODE_USERS_FILE")
+    done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
 }
 
 # 查看用户可访问的节点
