@@ -1044,11 +1044,16 @@ check_user_expiration() {
         if [[ $today_ts -ge $expire_ts ]]; then
             echo -e "  ${RED}✗${NC} $username: 已过期 (有效期至 $expire_date) ${RED}(已禁用)${NC}"
 
-            # 禁用用户
+            # 禁用用户（文件+API动态）
             local users_json=$(cat "$USERS_FILE")
             users_json=$(echo "$users_json" | jq --arg uuid "$uuid" \
                 '(.users[] | select(.id == $uuid) | .enabled) = false')
             echo "$users_json" | jq '.' > "$USERS_FILE"
+
+            # 通过 API 动态禁用用户（无需重启）
+            if command -v api_disable_user &>/dev/null; then
+                api_disable_user "$uuid" 2>&1 | sed 's/^/    /'
+            fi
 
             ((disabled_count++))
         else
@@ -1105,11 +1110,16 @@ check_traffic_limits() {
         if [[ "$over_limit" == "yes" ]]; then
             echo -e "  ${RED}✗${NC} $username: 已用 ${used_gb} GB / 限制 ${traffic_limit} GB ${RED}(超限,已禁用)${NC}"
 
-            # 禁用用户
+            # 禁用用户（文件+API动态）
             local users_json=$(cat "$USERS_FILE")
             users_json=$(echo "$users_json" | jq --arg uuid "$uuid" \
                 '(.users[] | select(.id == $uuid) | .enabled) = false')
             echo "$users_json" | jq '.' > "$USERS_FILE"
+
+            # 通过 API 动态禁用用户（无需重启）
+            if command -v api_disable_user &>/dev/null; then
+                api_disable_user "$uuid" 2>&1 | sed 's/^/    /'
+            fi
 
             ((disabled_count++))
         else
@@ -1149,9 +1159,7 @@ check_all_user_limits() {
     echo ""
 
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${YELLOW}提示: 如果有用户被禁用，请运行以下命令使更改生效：${NC}"
-    echo -e "  1. 重新生成配置"
-    echo -e "  2. 重启 Xray 服务"
+    echo -e "${GREEN}提示: 用户已通过 API 动态禁用，立即生效，无需重启 Xray${NC}"
 }
 
 # 查看在线用户

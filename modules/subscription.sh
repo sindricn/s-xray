@@ -449,10 +449,47 @@ generate_share_link_smart() {
     local protocol=$(echo "$node_json" | jq -r '.protocol')
     local security=$(echo "$node_json" | jq -r '.security // "none"')
 
-    # 获取节点名称，构建完整的remark（节点名-用户名）
+    # 获取节点名称和用户信息
     local node_name=$(echo "$node_json" | jq -r '.name // "未命名"')
-    local username=$(jq -r ".users[] | select(.id == \"$user_id\") | .username // \"\"" "$USERS_FILE" 2>/dev/null)
-    local remark="${node_name}-${username}"
+    local user=$(jq -r ".users[] | select(.id == \"$user_id\")" "$USERS_FILE" 2>/dev/null)
+    local username=$(echo "$user" | jq -r '.username // ""')
+
+    # 获取用户流量和期限信息
+    local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
+    local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
+    local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
+
+    # 构建带流量和期限信息的 remark
+    local traffic_info=""
+    if [[ "$traffic_limit" != "unlimited" ]]; then
+        # 计算剩余流量
+        local remaining=$(awk "BEGIN {printf \"%.1f\", $traffic_limit - $traffic_used}")
+        traffic_info="${remaining}/${traffic_limit}GB"
+    else
+        traffic_info="∞"
+    fi
+
+    local expire_info=""
+    if [[ "$expire_date" != "unlimited" ]]; then
+        # 计算剩余天数
+        local expire_ts=$(date -d "$expire_date" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d' "$expire_date" '+%s' 2>/dev/null)
+        local today_ts=$(date '+%s')
+        if [[ -n "$expire_ts" && -n "$today_ts" ]]; then
+            local days_left=$(( (expire_ts - today_ts) / 86400 ))
+            if [[ $days_left -le 0 ]]; then
+                expire_info="已过期"
+            else
+                expire_info="${days_left}天"
+            fi
+        else
+            expire_info="$expire_date"
+        fi
+    else
+        expire_info="∞"
+    fi
+
+    # 组合remark: 节点名-用户名 [剩余流量 | 剩余天数]
+    local remark="${node_name}-${username} [${traffic_info}|${expire_info}]"
 
     # 获取用户密码（Trojan和SS需要）
     local user_password=""

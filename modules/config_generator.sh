@@ -262,7 +262,7 @@ generate_xray_config() {
             },
             api: {
                 tag: "api",
-                services: ["StatsService"]
+                services: ["StatsService", "HandlerService"]
             }
         }')
 
