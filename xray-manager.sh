@@ -1650,14 +1650,14 @@ menu_outbound() {
 
 # 主程序
 main() {
+    # 先加载所有模块（必须在调用模块函数之前）
+    source_modules
+
     # 检查 root 权限
     require_root
 
     # 初始化数据目录
     init_data_dir
-
-    # 加载所有模块
-    source_modules
 
     # 初始化默认admin用户
     init_admin_user
