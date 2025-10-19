@@ -847,9 +847,11 @@ menu_user() {
         echo -e "${GREEN}3.${NC} 修改用户"
         echo -e "${GREEN}4.${NC} 删除用户"
         echo -e "${GREEN}5.${NC} 查看在线用户"
+        echo -e "${GREEN}6.${NC} 更新所有用户流量统计"
+        echo -e "${GREEN}7.${NC} 检查用户限制 (流量+有效期)"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-5]: " choice
+        read -p "请选择操作 [0-7]: " choice
 
         case $choice in
             1) view_user_detail ;;
@@ -857,6 +859,8 @@ menu_user() {
             3) modify_user_menu ;;
             4) delete_user_smart ;;
             5) show_online_users ;;
+            6) update_all_users_traffic ;;
+            7) check_all_user_limits ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac

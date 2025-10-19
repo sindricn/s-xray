@@ -273,8 +273,18 @@ show_user_detail() {
     local enabled=$(echo "$user" | jq -r '.enabled // true')
     local created=$(echo "$user" | jq -r '.created // "未知"')
     local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
-    local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
     local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
+
+    # 实时更新流量使用情况
+    echo -e "${GRAY}正在获取实时流量统计...${NC}"
+    local traffic_used="0"
+    local updated_gb=$(update_user_traffic_usage "$uuid" 2>/dev/null)
+    if [[ $? -eq 0 && -n "$updated_gb" ]]; then
+        traffic_used="$updated_gb"
+    else
+        # 如果无法更新，使用文件中的旧值
+        traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
+    fi
 
     local status_text=""
     if [[ "$enabled" == "true" ]]; then
@@ -919,6 +929,229 @@ get_user_traffic_summary() {
     local downlink_mb=$((downlink / 1048576))
 
     echo "↑${uplink_mb}MB ↓${downlink_mb}MB"
+}
+
+# 更新用户已使用流量（从 Stats API 读取并写入用户文件）
+update_user_traffic_usage() {
+    local uuid=$1
+
+    # 从配置文件中获取用户的 email
+    local config_email=$(get_user_email_from_config "$uuid")
+    if [[ -z "$config_email" || "$config_email" == "null" ]]; then
+        return 1
+    fi
+
+    # 从 Stats API 获取流量
+    local api_addr="127.0.0.1:10085"
+    local xray_bin="/usr/local/xray/xray"
+
+    # 检查 API 和 xray 可用性
+    if ! ss -lnt 2>/dev/null | grep -q ":10085 " && ! netstat -lnt 2>/dev/null | grep -q ":10085 "; then
+        return 1
+    fi
+
+    if [[ ! -x "$xray_bin" ]]; then
+        return 1
+    fi
+
+    # 查询流量
+    local stats_json=$($xray_bin api statsquery --server=$api_addr -pattern "user>>>${config_email}>>>traffic" 2>/dev/null)
+
+    local uplink=$(echo "$stats_json" | jq -r ".stat[]? | select(.name == \"user>>>${config_email}>>>traffic>>>uplink\") | .value // 0" 2>/dev/null)
+    uplink=${uplink:-0}
+    [[ ! "$uplink" =~ ^[0-9]+$ ]] && uplink=0
+
+    local downlink=$(echo "$stats_json" | jq -r ".stat[]? | select(.name == \"user>>>${config_email}>>>traffic>>>downlink\") | .value // 0" 2>/dev/null)
+    downlink=${downlink:-0}
+    [[ ! "$downlink" =~ ^[0-9]+$ ]] && downlink=0
+
+    # 计算总流量（GB）
+    local total_bytes=$((uplink + downlink))
+    local total_gb=$(awk "BEGIN {printf \"%.3f\", $total_bytes/1073741824}")
+
+    # 更新用户文件中的 traffic_used_gb
+    local users_json=$(cat "$USERS_FILE")
+    users_json=$(echo "$users_json" | jq --arg uuid "$uuid" --arg used "$total_gb" \
+        '(.users[] | select(.id == $uuid) | .traffic_used_gb) = $used')
+
+    echo "$users_json" | jq '.' > "$USERS_FILE"
+
+    echo "$total_gb"
+}
+
+# 更新所有用户的流量使用情况
+update_all_users_traffic() {
+    if [[ ! -f "$USERS_FILE" ]]; then
+        return
+    fi
+
+    echo -e "${CYAN}正在更新所有用户流量统计...${NC}"
+
+    local updated_count=0
+    local total_count=$(jq '.users | length' "$USERS_FILE" 2>/dev/null)
+
+    while IFS= read -r user; do
+        local uuid=$(echo "$user" | jq -r '.id')
+        local username=$(echo "$user" | jq -r '.username // "未知"')
+
+        # 更新该用户的流量
+        local used_gb=$(update_user_traffic_usage "$uuid")
+
+        if [[ $? -eq 0 && -n "$used_gb" ]]; then
+            echo -e "  ${GREEN}✓${NC} $username: ${used_gb} GB"
+            ((updated_count++))
+        else
+            echo -e "  ${GRAY}○${NC} $username: 无法获取"
+        fi
+    done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
+
+    echo ""
+    echo -e "${GREEN}已更新 $updated_count/$total_count 个用户的流量统计${NC}"
+}
+
+# 检查用户有效期（如果过期则禁用）
+check_user_expiration() {
+    if [[ ! -f "$USERS_FILE" ]]; then
+        return
+    fi
+
+    echo -e "${CYAN}检查用户有效期...${NC}"
+
+    local disabled_count=0
+    local today=$(date '+%Y-%m-%d')
+
+    while IFS= read -r user; do
+        local uuid=$(echo "$user" | jq -r '.id')
+        local username=$(echo "$user" | jq -r '.username // "未知"')
+        local enabled=$(echo "$user" | jq -r '.enabled // true')
+        local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
+
+        # 跳过无限期或已禁用的用户
+        if [[ "$expire_date" == "unlimited" || "$enabled" != "true" ]]; then
+            continue
+        fi
+
+        # 比较日期（使用日期戳）
+        local expire_ts=$(date -d "$expire_date" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d' "$expire_date" '+%s' 2>/dev/null)
+        local today_ts=$(date -d "$today" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d' "$today" '+%s' 2>/dev/null)
+
+        if [[ -z "$expire_ts" || -z "$today_ts" ]]; then
+            echo -e "  ${YELLOW}⚠${NC} $username: 无法解析日期 $expire_date"
+            continue
+        fi
+
+        # 检查是否过期
+        if [[ $today_ts -ge $expire_ts ]]; then
+            echo -e "  ${RED}✗${NC} $username: 已过期 (有效期至 $expire_date) ${RED}(已禁用)${NC}"
+
+            # 禁用用户
+            local users_json=$(cat "$USERS_FILE")
+            users_json=$(echo "$users_json" | jq --arg uuid "$uuid" \
+                '(.users[] | select(.id == $uuid) | .enabled) = false')
+            echo "$users_json" | jq '.' > "$USERS_FILE"
+
+            ((disabled_count++))
+        else
+            # 计算剩余天数
+            local days_left=$(( (expire_ts - today_ts) / 86400 ))
+
+            if [[ $days_left -le 7 ]]; then
+                echo -e "  ${YELLOW}⚠${NC} $username: 还有 ${days_left} 天过期 (有效期至 $expire_date)"
+            else
+                echo -e "  ${GREEN}✓${NC} $username: 有效期至 $expire_date (还有 ${days_left} 天)"
+            fi
+        fi
+    done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
+
+    echo ""
+    if [[ $disabled_count -gt 0 ]]; then
+        echo -e "${RED}共禁用 $disabled_count 个过期用户${NC}"
+        echo -e "${YELLOW}提示: 需要重新生成配置并重启 Xray 才能生效${NC}"
+    else
+        echo -e "${GREEN}所有用户有效期正常${NC}"
+    fi
+}
+
+# 检查用户流量限制（如果超过限制则禁用）
+check_traffic_limits() {
+    if [[ ! -f "$USERS_FILE" ]]; then
+        return
+    fi
+
+    echo -e "${CYAN}检查用户流量限制...${NC}"
+
+    local disabled_count=0
+
+    while IFS= read -r user; do
+        local uuid=$(echo "$user" | jq -r '.id')
+        local username=$(echo "$user" | jq -r '.username // "未知"')
+        local enabled=$(echo "$user" | jq -r '.enabled // true')
+        local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
+
+        # 跳过无限流量或已禁用的用户
+        if [[ "$traffic_limit" == "unlimited" || "$enabled" != "true" ]]; then
+            continue
+        fi
+
+        # 更新流量统计
+        local used_gb=$(update_user_traffic_usage "$uuid")
+        if [[ $? -ne 0 || -z "$used_gb" ]]; then
+            continue
+        fi
+
+        # 比较流量（使用 awk 进行浮点数比较）
+        local over_limit=$(awk -v used="$used_gb" -v limit="$traffic_limit" 'BEGIN {print (used >= limit) ? "yes" : "no"}')
+
+        if [[ "$over_limit" == "yes" ]]; then
+            echo -e "  ${RED}✗${NC} $username: 已用 ${used_gb} GB / 限制 ${traffic_limit} GB ${RED}(超限,已禁用)${NC}"
+
+            # 禁用用户
+            local users_json=$(cat "$USERS_FILE")
+            users_json=$(echo "$users_json" | jq --arg uuid "$uuid" \
+                '(.users[] | select(.id == $uuid) | .enabled) = false')
+            echo "$users_json" | jq '.' > "$USERS_FILE"
+
+            ((disabled_count++))
+        else
+            local percent=$(awk -v used="$used_gb" -v limit="$traffic_limit" 'BEGIN {printf "%.1f", (used/limit)*100}')
+
+            if (( $(awk -v p="$percent" 'BEGIN {print (p >= 80) ? 1 : 0}') )); then
+                echo -e "  ${YELLOW}⚠${NC} $username: 已用 ${used_gb} GB / 限制 ${traffic_limit} GB ${YELLOW}(${percent}%)${NC}"
+            else
+                echo -e "  ${GREEN}✓${NC} $username: 已用 ${used_gb} GB / 限制 ${traffic_limit} GB (${percent}%)"
+            fi
+        fi
+    done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
+
+    echo ""
+    if [[ $disabled_count -gt 0 ]]; then
+        echo -e "${RED}共禁用 $disabled_count 个超限用户${NC}"
+        echo -e "${YELLOW}提示: 需要重新生成配置并重启 Xray 才能生效${NC}"
+    else
+        echo -e "${GREEN}所有用户流量正常${NC}"
+    fi
+}
+
+# 综合检查用户限制（流量 + 有效期）
+check_all_user_limits() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      用户限制综合检查                ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    # 先检查有效期
+    check_user_expiration
+    echo ""
+
+    # 再检查流量限制
+    check_traffic_limits
+    echo ""
+
+    echo -e "${CYAN}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}提示: 如果有用户被禁用，请运行以下命令使更改生效：${NC}"
+    echo -e "  1. 重新生成配置"
+    echo -e "  2. 重启 Xray 服务"
 }
 
 # 查看在线用户
