@@ -5,7 +5,8 @@
 # 用于排查流量统计不工作的问题
 #================================================================
 
-set -e
+# 注意：不使用 set -e，以便诊断脚本能完整运行
+set -u  # 只检测未定义变量
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -143,10 +144,8 @@ echo "执行命令: $XRAY_BIN api statsquery --server=$API_ADDR -pattern \"\""
 temp_output=$(mktemp)
 temp_error=$(mktemp)
 
-set +e  # 临时关闭错误退出
-$XRAY_BIN api statsquery --server=$API_ADDR -pattern "" > "$temp_output" 2> "$temp_error"
+$XRAY_BIN api statsquery --server=$API_ADDR -pattern "" > "$temp_output" 2> "$temp_error" || true
 stats_exit_code=$?
-set -e  # 恢复错误退出
 
 stats_output=$(cat "$temp_output")
 stats_error=$(cat "$temp_error")
@@ -209,21 +208,17 @@ if [[ -n "$first_email" && "$first_email" != "null" && "$first_email" != "" ]]; 
     echo "测试用户: $first_email"
     echo "查询命令: $XRAY_BIN api statsquery --server=$API_ADDR --name \"user>>>${first_email}>>>traffic>>>uplink\""
 
-    set +e  # 临时关闭错误退出
-
     # 查询上行流量
-    uplink_raw=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>uplink" 2>/dev/null)
-    uplink=$(echo "$uplink_raw" | grep "value" | awk '{print $2}' | tr -d '\r' | head -1)
+    uplink_raw=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>uplink" 2>/dev/null || true)
+    uplink=$(echo "$uplink_raw" | grep "value" | awk '{print $2}' | tr -d '\r' | head -1 || echo "0")
     uplink=${uplink:-0}
-    [[ ! "$uplink" =~ ^[0-9]+$ ]] && uplink=0
+    if [[ ! "$uplink" =~ ^[0-9]+$ ]]; then uplink=0; fi
 
     # 查询下行流量
-    downlink_raw=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>downlink" 2>/dev/null)
-    downlink=$(echo "$downlink_raw" | grep "value" | awk '{print $2}' | tr -d '\r' | head -1)
+    downlink_raw=$($XRAY_BIN api statsquery --server=$API_ADDR --name "user>>>${first_email}>>>traffic>>>downlink" 2>/dev/null || true)
+    downlink=$(echo "$downlink_raw" | grep "value" | awk '{print $2}' | tr -d '\r' | head -1 || echo "0")
     downlink=${downlink:-0}
-    [[ ! "$downlink" =~ ^[0-9]+$ ]] && downlink=0
-
-    set -e  # 恢复错误退出
+    if [[ ! "$downlink" =~ ^[0-9]+$ ]]; then downlink=0; fi
 
     echo "  API 原始响应（uplink）:"
     if [[ -n "$uplink_raw" ]]; then
