@@ -137,7 +137,10 @@ if [[ ! -x "$XRAY_BIN" ]]; then
 fi
 
 echo "尝试查询所有统计数据..."
+echo "执行命令: $XRAY_BIN api statsquery --server=$API_ADDR -pattern \"\""
 stats_output=$($XRAY_BIN api statsquery --server=$API_ADDR -pattern "" 2>&1 || true)
+stats_exit_code=$?
+echo "命令退出码: $stats_exit_code"
 
 if [[ -n "$stats_output" ]]; then
     echo -e "${GREEN}✓ Stats API 响应成功${NC}"
