@@ -558,6 +558,41 @@ external-controller: 127.0.0.1:9090
 proxies:
 EOF
 
+    # 获取用户信息用于生成带流量/期限的节点名称
+    local user=$(jq -r ".users[] | select(.id == \"$user_id\")" "$USERS_FILE" 2>/dev/null)
+    local username=$(echo "$user" | jq -r '.username // ""')
+    local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
+    local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
+    local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
+
+    # 构建流量信息
+    local traffic_info=""
+    if [[ "$traffic_limit" != "unlimited" ]]; then
+        local remaining=$(awk "BEGIN {printf \"%.1f\", $traffic_limit - $traffic_used}")
+        traffic_info="${remaining}/${traffic_limit}GB"
+    else
+        traffic_info="∞"
+    fi
+
+    # 构建期限信息
+    local expire_info=""
+    if [[ "$expire_date" != "unlimited" ]]; then
+        local expire_ts=$(date -d "$expire_date" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d' "$expire_date" '+%s' 2>/dev/null)
+        local today_ts=$(date '+%s')
+        if [[ -n "$expire_ts" && -n "$today_ts" ]]; then
+            local days_left=$(( (expire_ts - today_ts) / 86400 ))
+            if [[ $days_left -le 0 ]]; then
+                expire_info="已过期"
+            else
+                expire_info="${days_left}天"
+            fi
+        else
+            expire_info="$expire_date"
+        fi
+    else
+        expire_info="∞"
+    fi
+
     # 关键修复：使用数组收集节点配置，避免subshell问题
     local proxy_configs=()
     local proxy_list=()
@@ -574,6 +609,7 @@ EOF
         local security=$(echo "$node" | jq -r '.security // "none"')
         local transport=$(echo "$node" | jq -r '.transport // "tcp"')
         local extra=$(echo "$node" | jq -r '.extra')
+        local node_name_raw=$(echo "$node" | jq -r '.name // "未命名"')
 
         # 调试信息
         echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
@@ -584,7 +620,7 @@ EOF
             vless)
                 # VLESS Reality 支持（Clash Meta）
                 if [[ "$security" == "reality" ]]; then
-                    local node_name="VLESS-Reality-${port}"
+                    local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
                     proxy_list+=("$node_name")
 
                     local dest=$(echo "$extra" | jq -r '.dest // ""')
@@ -622,7 +658,7 @@ EOF
     client-fingerprint: chrome"
                 elif [[ "$security" == "tls" ]]; then
                     # VLESS TLS
-                    local node_name="VLESS-${port}"
+                    local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
                     proxy_list+=("$node_name")
                     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
@@ -644,7 +680,7 @@ EOF
                     fi
                 else
                     # Plain VLESS (no TLS)
-                    local node_name="VLESS-${port}"
+                    local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
                     proxy_list+=("$node_name")
 
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
@@ -663,7 +699,7 @@ EOF
                 fi
                 ;;
             vmess)
-                local node_name="VMess-${port}"
+                local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
                 proxy_list+=("$node_name")
 
                 local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
@@ -704,7 +740,7 @@ EOF
                     continue
                 fi
 
-                local node_name="Trojan-${port}"
+                local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
                 proxy_list+=("$node_name")
 
                 local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
@@ -725,7 +761,7 @@ EOF
                     continue
                 fi
 
-                local node_name="SS-${port}"
+                local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
                 proxy_list+=("$node_name")
 
                 local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
@@ -1705,7 +1741,33 @@ regenerate_subscription() {
 
         "clash")
             # Clash YAML格式
-            generate_clash_config "$user_id" > "$sub_file"
+            # 获取用户绑定的节点
+            local user_node_ports=()
+            if [[ -n "$user_id" ]]; then
+                while IFS= read -r port; do
+                    [[ -n "$port" ]] && user_node_ports+=("$port")
+                done < <(jq -r ".bindings[] | select(.users[] == \"$user_id\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+            fi
+
+            # 收集节点JSON数组
+            local nodes_json_array="[]"
+            if [[ ${#user_node_ports[@]} -gt 0 ]]; then
+                for port in "${user_node_ports[@]}"; do
+                    local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                    if [[ -n "$node" && "$node" != "null" ]]; then
+                        nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
+                    fi
+                done
+            fi
+
+            # 获取用户密码（用于 Trojan/SS）
+            local user_password=""
+            if [[ -n "$user_id" ]]; then
+                user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
+            fi
+
+            # 生成 Clash 配置
+            generate_clash_config "$nodes_json_array" "$user_id" "$user_password" > "$sub_file"
             ;;
 
         "raw")

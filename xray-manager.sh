@@ -115,35 +115,48 @@ get_xray_status() {
     echo "$version|$status"
 }
 
-# 获取在线节点数量
-get_online_nodes() {
+# 获取在线用户数量
+get_online_users_count() {
     local online=0
 
-    if [[ ! -f "$NODES_FILE" ]]; then
+    if [[ ! -f "$USERS_FILE" || ! -f "$XRAY_CONFIG" ]]; then
         echo "0"
         return
     fi
 
-    # 检查每个节点的端口是否在监听
-    while IFS= read -r node; do
-        if [[ -z "$node" || "$node" == "null" ]]; then
+    # 遍历所有用户
+    while IFS= read -r user; do
+        local uuid=$(echo "$user" | jq -r '.id // empty' 2>/dev/null)
+        local enabled=$(echo "$user" | jq -r '.enabled // true' 2>/dev/null)
+
+        # 跳过禁用的用户
+        if [[ "$enabled" != "true" || -z "$uuid" ]]; then
             continue
         fi
 
-        local port=$(echo "$node" | jq -r '.port // empty' 2>/dev/null)
-        if [[ -n "$port" ]]; then
-            # 检查端口是否在监听（支持ss或netstat）
-            if command -v ss &>/dev/null; then
-                if ss -tlnp 2>/dev/null | grep -q ":$port "; then
-                    ((online++))
-                fi
-            elif command -v netstat &>/dev/null; then
-                if netstat -tlnp 2>/dev/null | grep -q ":$port "; then
-                    ((online++))
-                fi
+        # 获取用户的 email
+        local config_email=$(jq -r ".inbounds[].settings.clients[]? | select(.id == \"$uuid\" or .password) | .email" "$XRAY_CONFIG" 2>/dev/null | head -1)
+
+        if [[ -z "$config_email" || "$config_email" == "null" ]]; then
+            continue
+        fi
+
+        # 获取用户绑定的端口
+        local port=$(jq -r ".bindings[] | select(.users[] == \"$uuid\") | .port" "$NODE_USERS_FILE" 2>/dev/null | head -1)
+
+        if [[ -z "$port" ]]; then
+            continue
+        fi
+
+        # 检查是否在线（需要 get_user_online_status_with_port 函数）
+        if command -v get_user_online_status_with_port &>/dev/null; then
+            local status_port=$(get_user_online_status_with_port "$config_email" "$uuid" 2>/dev/null)
+            local status=$(echo "$status_port" | cut -d: -f1)
+            if [[ "$status" == "online" ]]; then
+                ((online++))
             fi
         fi
-    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+    done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
 
     echo "$online"
 }
@@ -169,8 +182,8 @@ show_menu() {
         user_count=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
     fi
 
-    # 获取在线节点数量
-    local online_count=$(get_online_nodes)
+    # 获取在线用户数量
+    local online_count=$(get_online_users_count)
 
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.2    ║${NC}"
@@ -183,7 +196,7 @@ show_menu() {
     echo -e "${CYAN}│${NC}  运行状态: ${status}"
     echo -e "${CYAN}│${NC}  用户数量: ${BLUE}${user_count}${NC}"
     echo -e "${CYAN}│${NC}  节点总数: ${BLUE}${node_count}${NC}"
-    echo -e "${CYAN}│${NC}  在线节点: ${GREEN}${online_count}${NC}/${BLUE}${node_count}${NC}"
+    echo -e "${CYAN}│${NC}  在线用户: ${GREEN}${online_count}${NC}/${BLUE}${user_count}${NC}"
     echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
     echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
