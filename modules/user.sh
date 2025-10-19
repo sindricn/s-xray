@@ -709,14 +709,17 @@ check_user_has_traffic() {
         return
     fi
 
-    # 查询上行流量
-    local uplink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    # 查询流量（使用 -pattern 参数返回 JSON，然后用 jq 解析）
+    local stats_json=$($xray_bin api statsquery --server=$api_addr -pattern "user>>>${email}>>>traffic" 2>/dev/null)
+
+    # 从 JSON 中提取上行流量
+    local uplink=$(echo "$stats_json" | jq -r ".stat[]? | select(.name == \"user>>>${email}>>>traffic>>>uplink\") | .value // 0" 2>/dev/null)
     uplink=${uplink:-0}
     # 确保是数字
     [[ ! "$uplink" =~ ^[0-9]+$ ]] && uplink=0
 
-    # 查询下行流量
-    local downlink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    # 从 JSON 中提取下行流量
+    local downlink=$(echo "$stats_json" | jq -r ".stat[]? | select(.name == \"user>>>${email}>>>traffic>>>downlink\") | .value // 0" 2>/dev/null)
     downlink=${downlink:-0}
     # 确保是数字
     [[ ! "$downlink" =~ ^[0-9]+$ ]] && downlink=0
@@ -896,14 +899,17 @@ get_user_traffic_summary() {
         return
     fi
 
-    # 查询上行流量
-    local uplink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>uplink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    # 查询流量（使用 -pattern 参数返回 JSON，然后用 jq 解析）
+    local stats_json=$($xray_bin api statsquery --server=$api_addr -pattern "user>>>${email}>>>traffic" 2>/dev/null)
+
+    # 从 JSON 中提取上行流量
+    local uplink=$(echo "$stats_json" | jq -r ".stat[]? | select(.name == \"user>>>${email}>>>traffic>>>uplink\") | .value // 0" 2>/dev/null)
     uplink=${uplink:-0}
     # 确保是数字
     [[ ! "$uplink" =~ ^[0-9]+$ ]] && uplink=0
 
-    # 查询下行流量
-    local downlink=$($xray_bin api statsquery --server=$api_addr --name "user>>>${email}>>>traffic>>>downlink" 2>/dev/null | grep "value" | awk '{print $2}' | tr -d '\r')
+    # 从 JSON 中提取下行流量
+    local downlink=$(echo "$stats_json" | jq -r ".stat[]? | select(.name == \"user>>>${email}>>>traffic>>>downlink\") | .value // 0" 2>/dev/null)
     downlink=${downlink:-0}
     # 确保是数字
     [[ ! "$downlink" =~ ^[0-9]+$ ]] && downlink=0
