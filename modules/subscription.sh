@@ -454,42 +454,8 @@ generate_share_link_smart() {
     local user=$(jq -r ".users[] | select(.id == \"$user_id\")" "$USERS_FILE" 2>/dev/null)
     local username=$(echo "$user" | jq -r '.username // ""')
 
-    # 获取用户流量和期限信息
-    local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
-    local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
-    local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
-
-    # 构建带流量和期限信息的 remark
-    local traffic_info=""
-    if [[ "$traffic_limit" != "unlimited" ]]; then
-        # 计算剩余流量
-        local remaining=$(awk "BEGIN {printf \"%.1f\", $traffic_limit - $traffic_used}")
-        traffic_info="${remaining}/${traffic_limit}GB"
-    else
-        traffic_info="∞"
-    fi
-
-    local expire_info=""
-    if [[ "$expire_date" != "unlimited" ]]; then
-        # 计算剩余天数
-        local expire_ts=$(date -d "$expire_date" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d' "$expire_date" '+%s' 2>/dev/null)
-        local today_ts=$(date '+%s')
-        if [[ -n "$expire_ts" && -n "$today_ts" ]]; then
-            local days_left=$(( (expire_ts - today_ts) / 86400 ))
-            if [[ $days_left -le 0 ]]; then
-                expire_info="已过期"
-            else
-                expire_info="${days_left}天"
-            fi
-        else
-            expire_info="$expire_date"
-        fi
-    else
-        expire_info="∞"
-    fi
-
-    # 组合remark: 节点名-用户名 [剩余流量 | 剩余天数]
-    local remark="${node_name}-${username} [${traffic_info}|${expire_info}]"
+    # 组合remark: 节点名-用户名（流量和期限信息将显示在订阅响应头中）
+    local remark="${node_name}-${username}"
 
     # 获取用户密码（Trojan和SS需要）
     local user_password=""
@@ -558,40 +524,9 @@ external-controller: 127.0.0.1:9090
 proxies:
 EOF
 
-    # 获取用户信息用于生成带流量/期限的节点名称
+    # 获取用户信息用于节点名称（流量和期限信息将显示在订阅响应头中）
     local user=$(jq -r ".users[] | select(.id == \"$user_id\")" "$USERS_FILE" 2>/dev/null)
     local username=$(echo "$user" | jq -r '.username // ""')
-    local traffic_limit=$(echo "$user" | jq -r '.traffic_limit_gb // "unlimited"')
-    local traffic_used=$(echo "$user" | jq -r '.traffic_used_gb // "0"')
-    local expire_date=$(echo "$user" | jq -r '.expire_date // "unlimited"')
-
-    # 构建流量信息
-    local traffic_info=""
-    if [[ "$traffic_limit" != "unlimited" ]]; then
-        local remaining=$(awk "BEGIN {printf \"%.1f\", $traffic_limit - $traffic_used}")
-        traffic_info="${remaining}/${traffic_limit}GB"
-    else
-        traffic_info="∞"
-    fi
-
-    # 构建期限信息
-    local expire_info=""
-    if [[ "$expire_date" != "unlimited" ]]; then
-        local expire_ts=$(date -d "$expire_date" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d' "$expire_date" '+%s' 2>/dev/null)
-        local today_ts=$(date '+%s')
-        if [[ -n "$expire_ts" && -n "$today_ts" ]]; then
-            local days_left=$(( (expire_ts - today_ts) / 86400 ))
-            if [[ $days_left -le 0 ]]; then
-                expire_info="已过期"
-            else
-                expire_info="${days_left}天"
-            fi
-        else
-            expire_info="$expire_date"
-        fi
-    else
-        expire_info="∞"
-    fi
 
     # 关键修复：使用数组收集节点配置，避免subshell问题
     local proxy_configs=()
@@ -620,7 +555,7 @@ EOF
             vless)
                 # VLESS Reality 支持（Clash Meta）
                 if [[ "$security" == "reality" ]]; then
-                    local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
+                    local node_name="${node_name_raw}-${username}"
                     proxy_list+=("$node_name")
 
                     local dest=$(echo "$extra" | jq -r '.dest // ""')
@@ -658,7 +593,7 @@ EOF
     client-fingerprint: chrome"
                 elif [[ "$security" == "tls" ]]; then
                     # VLESS TLS
-                    local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
+                    local node_name="${node_name_raw}-${username}"
                     proxy_list+=("$node_name")
                     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
@@ -680,7 +615,7 @@ EOF
                     fi
                 else
                     # Plain VLESS (no TLS)
-                    local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
+                    local node_name="${node_name_raw}-${username}"
                     proxy_list+=("$node_name")
 
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
@@ -699,7 +634,7 @@ EOF
                 fi
                 ;;
             vmess)
-                local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
+                local node_name="${node_name_raw}-${username}"
                 proxy_list+=("$node_name")
 
                 local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
@@ -740,7 +675,7 @@ EOF
                     continue
                 fi
 
-                local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
+                local node_name="${node_name_raw}-${username}"
                 proxy_list+=("$node_name")
 
                 local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
@@ -761,7 +696,7 @@ EOF
                     continue
                 fi
 
-                local node_name="${node_name_raw}-${username} [${traffic_info}|${expire_info}]"
+                local node_name="${node_name_raw}-${username}"
                 proxy_list+=("$node_name")
 
                 local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
@@ -1295,12 +1230,14 @@ generate_subscription_with_user() {
             else
                 sub_content=""
             fi
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}.txt"
+            # 文件名格式: {name}_{user_id}_base64.txt (便于服务器提取用户信息)
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_base64.txt"
             ;;
         raw)
             # 原始订阅（纯文本，每行一个链接）
             sub_content=$(printf "%s\n" "${share_links[@]}")
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
+            # 文件名格式: {name}_{user_id}_raw.txt
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_raw.txt"
             ;;
         clash)
             # Clash订阅 - YAML格式
@@ -1334,7 +1271,8 @@ generate_subscription_with_user() {
             fi
 
             sub_content="$clash_output"
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_clash.yaml"
+            # 文件名格式: {name}_{user_id}_clash.yaml
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_clash.yaml"
             ;;
     esac
 
@@ -1706,7 +1644,29 @@ regenerate_subscription() {
     # 获取订阅配置
     local user_id=$(echo "$sub_info" | jq -r '.user_id // empty')
     local sub_type=$(echo "$sub_info" | jq -r '.type // "base64"')
-    local sub_file=$(echo "$sub_info" | jq -r '.file')
+
+    # 根据新的文件命名规则生成文件路径
+    local sub_file=""
+    if [[ -n "$user_id" ]]; then
+        case "$sub_type" in
+            "base64")
+                sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_base64.txt"
+                ;;
+            "clash")
+                sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_clash.yaml"
+                ;;
+            "raw")
+                sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_raw.txt"
+                ;;
+            *)
+                # 兼容旧格式
+                sub_file=$(echo "$sub_info" | jq -r '.file')
+                ;;
+        esac
+    else
+        # 无用户绑定，使用旧格式
+        sub_file=$(echo "$sub_info" | jq -r '.file')
+    fi
 
     echo ""
     print_info "正在重新生成订阅: ${sub_name}"
@@ -1785,16 +1745,20 @@ regenerate_subscription() {
             ;;
     esac
 
-    # 更新订阅信息中的更新时间
-    jq "(.subscriptions[] | select(.name == \"$sub_name\") | .updated) = (now|todate)" "$sub_db" > "${sub_db}.tmp"
+    # 更新订阅信息（更新时间、文件路径和URL）
+    local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
+    local server_ip=$(get_public_ip)
+    local sub_filename=$(basename "$sub_file")
+    local sub_url="http://${server_ip}:${port}/sub/${sub_filename}"
+
+    jq --arg name "$sub_name" --arg url "$sub_url" --arg file "$sub_file" \
+       '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, file: $file, updated: (now|todate)})' \
+       "$sub_db" > "${sub_db}.tmp"
     mv "${sub_db}.tmp" "$sub_db"
 
     print_success "订阅重新生成成功！"
 
     # 显示订阅信息
-    local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-    local server_ip=$(get_public_ip)
-    local sub_url="http://${server_ip}:${port}/sub/${sub_name}"
 
     echo ""
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
@@ -1873,14 +1837,82 @@ import http.server
 import socketserver
 import os
 import sys
+import json
 from urllib.parse import unquote
+from datetime import datetime
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 DIRECTORY = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
+DATA_DIR = sys.argv[3] if len(sys.argv) > 3 else os.path.dirname(DIRECTORY)
 
 class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
+
+    def get_user_info_from_filename(self, filename):
+        """从订阅文件名中提取用户信息"""
+        try:
+            # 订阅文件名格式: {name}_{user_id}_{type}.txt
+            # 例如: mysubscription_abc123_base64.txt
+            parts = filename.rsplit('_', 2)
+            if len(parts) >= 3:
+                user_id = parts[1]
+                return user_id
+        except:
+            pass
+        return None
+
+    def get_subscription_userinfo(self, user_id):
+        """读取用户流量和期限信息"""
+        try:
+            users_file = os.path.join(DATA_DIR, 'users.json')
+            if not os.path.exists(users_file):
+                return None
+
+            with open(users_file, 'r', encoding='utf-8') as f:
+                users_data = json.load(f)
+
+            # 查找用户
+            user = None
+            for u in users_data.get('users', []):
+                if u.get('id') == user_id:
+                    user = u
+                    break
+
+            if not user:
+                return None
+
+            # 提取流量信息
+            traffic_limit = user.get('traffic_limit_gb', 'unlimited')
+            traffic_used = float(user.get('traffic_used_gb', 0))
+
+            # 计算上传和下载（这里简化为各占一半）
+            upload_bytes = int(traffic_used * 1073741824 / 2)
+            download_bytes = int(traffic_used * 1073741824 / 2)
+
+            # 计算总流量限制
+            if traffic_limit == 'unlimited':
+                total_bytes = 0  # 0 表示无限制
+            else:
+                total_bytes = int(float(traffic_limit) * 1073741824)
+
+            # 提取过期时间
+            expire_date = user.get('expire_date', 'unlimited')
+            if expire_date == 'unlimited':
+                expire_timestamp = 0  # 0 表示永不过期
+            else:
+                try:
+                    dt = datetime.strptime(expire_date, '%Y-%m-%d')
+                    expire_timestamp = int(dt.timestamp())
+                except:
+                    expire_timestamp = 0
+
+            # 返回格式: upload=xxx; download=xxx; total=xxx; expire=xxx
+            return f'upload={upload_bytes}; download={download_bytes}; total={total_bytes}; expire={expire_timestamp}'
+
+        except Exception as e:
+            print(f'[订阅服务] 读取用户信息失败: {e}', file=sys.stderr)
+            return None
 
     def do_GET(self):
         if self.path.startswith('/sub/'):
@@ -1893,6 +1925,15 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Cache-Control', 'no-cache')
+
+                # 添加订阅用户信息头
+                user_id = self.get_user_info_from_filename(filename)
+                if user_id:
+                    userinfo = self.get_subscription_userinfo(user_id)
+                    if userinfo:
+                        self.send_header('subscription-userinfo', userinfo)
+                        self.send_header('profile-update-interval', '24')  # 建议客户端每24小时更新一次
+
                 self.end_headers()
 
                 with open(filepath, 'rb') as f:
@@ -1919,8 +1960,8 @@ PYEOF
 
     chmod +x "${DATA_DIR}/subscription_server.py"
 
-    # 后台启动服务
-    nohup python3 "${DATA_DIR}/subscription_server.py" "$port" "$SUBSCRIPTION_DIR" > /dev/null 2>&1 &
+    # 后台启动服务（传递 DATA_DIR 作为第三个参数）
+    nohup python3 "${DATA_DIR}/subscription_server.py" "$port" "$SUBSCRIPTION_DIR" "$DATA_DIR" > /dev/null 2>&1 &
 
     sleep 1
 
