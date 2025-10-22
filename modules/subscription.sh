@@ -15,6 +15,16 @@ SUBSCRIPTION_META_FILE="${DATA_DIR}/subscription_metadata.json"
 # 返回: 实际文件路径，如果不存在返回空
 find_subscription_file() {
     local sub_name="$1"
+    local user_id=""
+    local sub_type=""
+
+    if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
+        local meta=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
+        if [[ -n "$meta" && "$meta" != "null" ]]; then
+            user_id=$(echo "$meta" | jq -r '.user_id // empty')
+            sub_type=$(echo "$meta" | jq -r '.type // empty')
+        fi
+    fi
 
     # 尝试所有可能的后缀
     local possible_files=(
@@ -22,6 +32,26 @@ find_subscription_file() {
         "${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
         "${SUBSCRIPTION_DIR}/${sub_name}_clash.yaml"
     )
+
+    if [[ -n "$user_id" ]]; then
+        case "$sub_type" in
+            clash|3)
+                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_clash.yaml")
+                ;;
+            raw|2)
+                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_raw.txt")
+                ;;
+            *)
+                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_base64.txt")
+                ;;
+        esac
+    fi
+
+    while IFS= read -r candidate; do
+        if [[ -n "$candidate" ]]; then
+            possible_files+=("$candidate")
+        fi
+    done < <(find "$SUBSCRIPTION_DIR" -maxdepth 1 -type f -name "${sub_name}_*" 2>/dev/null)
 
     for file in "${possible_files[@]}"; do
         if [[ -f "$file" ]]; then
@@ -1549,19 +1579,22 @@ show_subscription_links() {
         # 获取订阅端口
         local sub_port=$(cat "${DATA_DIR}/sub_port.txt" 2>/dev/null || echo "8080")
 
-        # 构建访问URL (使用/sub/路径，与订阅服务器一致)
+        # 使用实际文件构建访问URL
+        local sub_file_path=$(echo "$sub" | jq -r '.file // empty')
+        local resolved_file=""
+        if [[ -n "$sub_file_path" && -f "$sub_file_path" ]]; then
+            resolved_file="$sub_file_path"
+        else
+            resolved_file=$(find_subscription_file "$name" 2>/dev/null)
+        fi
+
         local access_url=""
-        case "$type" in
-            general|1)
-                access_url="http://${server_ip}:${sub_port}/sub/${name}.txt"
-                ;;
-            raw|2)
-                access_url="http://${server_ip}:${sub_port}/sub/${name}_raw.txt"
-                ;;
-            clash|3)
-                access_url="http://${server_ip}:${sub_port}/sub/${name}_clash.yaml"
-                ;;
-        esac
+        if [[ -n "$resolved_file" && -f "$resolved_file" ]]; then
+            local filename=$(basename "$resolved_file")
+            access_url="http://${server_ip}:${sub_port}/sub/${filename}"
+        elif [[ -n "$url" ]]; then
+            access_url="$url"
+        fi
 
         echo -e "${YELLOW}[$index] $name${NC} (用户: ${CYAN}$username${NC})"
         if [[ -n "$access_url" ]]; then
