@@ -242,6 +242,7 @@ get_subscription_domain_hint() {
             fi
         fi
     done
+    echo ""
 }
 
 # 根据节点配置解析分享链接所需主机
@@ -256,11 +257,6 @@ resolve_subscription_host() {
     extra=$(echo "$node_json" | jq -c '.extra // {}')
 
     local host=""
-
-    if [[ "$protocol" == "vless" && "$security" == "reality" ]]; then
-        host=$(echo "$extra" | jq -r '.server_names[0] // ""')
-        [[ "$host" == "null" ]] && host=""
-    fi
 
     if [[ -z "$host" ]]; then
         case "$protocol" in
@@ -591,8 +587,6 @@ generate_clash_config() {
     local user_id="$2"
     local user_password="$3"
 
-    local server_ip=$(get_public_ip)
-
     # 验证必需参数
     if [[ -z "$user_id" ]]; then
         echo "# ERROR: user_id is required" >&2
@@ -637,6 +631,7 @@ EOF
         local transport=$(echo "$node" | jq -r '.transport // "tcp"')
         local extra=$(echo "$node" | jq -r '.extra')
         local node_name_raw=$(echo "$node" | jq -r '.name // "未命名"')
+        local node_host=$(resolve_subscription_host "$node")
 
         # 调试信息
         echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
@@ -671,7 +666,7 @@ EOF
 
                     node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${server_ip}
+    server: ${node_host}
     port: ${port}
     uuid: ${user_id}
     network: tcp
@@ -691,7 +686,7 @@ EOF
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
                     node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${server_ip}
+    server: ${node_host}
     port: ${port}
     uuid: ${user_id}
     udp: true
@@ -713,7 +708,7 @@ EOF
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
                     node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${server_ip}
+    server: ${node_host}
     port: ${port}
     uuid: ${user_id}
     udp: true"
@@ -747,7 +742,7 @@ EOF
 
                 node_config="  - name: \"${node_name}\"
     type: vmess
-    server: ${server_ip}
+    server: ${node_host}
     port: ${port}
     uuid: ${user_id}
     alterId: ${alter_id}
@@ -773,7 +768,7 @@ EOF
                 local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                 node_config="  - name: \"${node_name}\"
     type: trojan
-    server: ${server_ip}
+    server: ${node_host}
     port: ${port}
     password: ${user_password}
     udp: true
@@ -805,7 +800,7 @@ EOF
                 esac
                 node_config="  - name: \"${node_name}\"
     type: ss
-    server: ${server_ip}
+    server: ${node_host}
     port: ${port}
     cipher: ${cipher}
     password: ${user_password}
@@ -1848,7 +1843,13 @@ regenerate_subscription() {
 
     # 更新订阅信息（更新时间、文件路径和URL）
     local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-    local server_ip=$(get_public_ip)
+    local server_ip=$(get_subscription_domain_hint)
+    if [[ -z "$server_ip" ]]; then
+        server_ip=$(get_public_ip)
+    fi
+    if [[ -z "$server_ip" ]]; then
+        server_ip="127.0.0.1"
+    fi
     local sub_filename=$(basename "$sub_file")
     local sub_url="http://${server_ip}:${port}/sub/${sub_filename}"
 
