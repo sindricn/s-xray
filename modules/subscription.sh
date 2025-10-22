@@ -2050,6 +2050,7 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     try:
+        socketserver.TCPServer.allow_reuse_address = True
         with socketserver.TCPServer(("", PORT), SubscriptionHandler) as httpd:
             print(f"[订阅服务] 运行在端口 {PORT}")
             print(f"[订阅服务] 文件目录: {DIRECTORY}")
