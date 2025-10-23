@@ -1335,12 +1335,26 @@ save_node_info() {
         return 1
     fi
 
-    if ! jq --argjson node "$node_data" '.nodes += [$node]' "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+    local node_tmp
+    node_tmp=$(mktemp) || {
+        print_error "无法创建临时文件保存节点信息"
+        return 1
+    }
+
+    printf '%s\n' "$node_data" > "$node_tmp" || {
+        print_error "写入节点临时数据失败"
+        rm -f "$node_tmp"
+        return 1
+    }
+
+    if ! jq --slurpfile new_node "$node_tmp" '.nodes += $new_node' "$NODES_FILE" > "${NODES_FILE}.tmp"; then
         print_error "写入节点信息失败"
+        rm -f "$node_tmp"
         return 1
     fi
 
     mv "${NODES_FILE}.tmp" "$NODES_FILE"
+    rm -f "$node_tmp"
 }
 
 # 从数据库删除节点

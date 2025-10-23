@@ -1823,10 +1823,10 @@ menu_script() {
 
                     if [[ -f "${script_dir}/uninstall.sh" ]]; then
                         log_info "执行卸载脚本: ${script_dir}/uninstall.sh"
-                        exec bash "${script_dir}/uninstall.sh"
+                        bash "${script_dir}/uninstall.sh"
                     elif [[ -f "/opt/s-xray/uninstall.sh" ]]; then
                         log_info "执行卸载脚本: /opt/s-xray/uninstall.sh"
-                        exec bash "/opt/s-xray/uninstall.sh"
+                        bash "/opt/s-xray/uninstall.sh"
                     else
                         log_error "未找到卸载脚本"
                         log_info "请手动运行: bash /opt/s-xray/uninstall.sh"
