@@ -15,16 +15,6 @@ SUBSCRIPTION_META_FILE="${DATA_DIR}/subscription_metadata.json"
 # 返回: 实际文件路径，如果不存在返回空
 find_subscription_file() {
     local sub_name="$1"
-    local user_id=""
-    local sub_type=""
-
-    if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
-        local meta=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
-        if [[ -n "$meta" && "$meta" != "null" ]]; then
-            user_id=$(echo "$meta" | jq -r '.user_id // empty')
-            sub_type=$(echo "$meta" | jq -r '.type // empty')
-        fi
-    fi
 
     # 尝试所有可能的后缀
     local possible_files=(
@@ -32,26 +22,6 @@ find_subscription_file() {
         "${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
         "${SUBSCRIPTION_DIR}/${sub_name}_clash.yaml"
     )
-
-    if [[ -n "$user_id" ]]; then
-        case "$sub_type" in
-            clash|3)
-                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_clash.yaml")
-                ;;
-            raw|2)
-                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_raw.txt")
-                ;;
-            *)
-                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_base64.txt")
-                ;;
-        esac
-    fi
-
-    while IFS= read -r candidate; do
-        if [[ -n "$candidate" ]]; then
-            possible_files+=("$candidate")
-        fi
-    done < <(find "$SUBSCRIPTION_DIR" -maxdepth 1 -type f -name "${sub_name}_*" 2>/dev/null)
 
     for file in "${possible_files[@]}"; do
         if [[ -f "$file" ]]; then
@@ -230,58 +200,6 @@ get_public_ip() {
     echo "$ip"
 }
 
-# 获取订阅服务配置中优先使用的域名
-get_subscription_domain_hint() {
-    for domain_file in "${DATA_DIR}/server_domain.txt" "${DATA_DIR}/host_domain.txt"; do
-        if [[ -f "$domain_file" ]]; then
-            local domain
-            domain=$(tr -d ' \r\n' < "$domain_file")
-            if [[ -n "$domain" && "$domain" != "未设置" ]]; then
-                echo "$domain"
-                return 0
-            fi
-        fi
-    done
-    echo ""
-}
-
-# 根据节点配置解析分享链接所需主机
-resolve_subscription_host() {
-    local node_json="$1"
-
-    local protocol
-    protocol=$(echo "$node_json" | jq -r '.protocol')
-    local security
-    security=$(echo "$node_json" | jq -r '.security // "none"')
-    local extra
-    extra=$(echo "$node_json" | jq -c '.extra // {}')
-
-    local host=""
-
-    if [[ -z "$host" ]]; then
-        case "$protocol" in
-            vless|vmess|trojan)
-                host=$(echo "$extra" | jq -r '.tls_domain // ""')
-                [[ "$host" == "null" ]] && host=""
-                ;;
-        esac
-    fi
-
-    if [[ -z "$host" ]]; then
-        host=$(get_subscription_domain_hint)
-    fi
-
-    if [[ -z "$host" ]]; then
-        host=$(get_public_ip)
-    fi
-
-    if [[ -z "$host" ]]; then
-        host="127.0.0.1"
-    fi
-
-    echo "$host"
-}
-
 # URL 编码
 urlencode() {
     local string="$1"
@@ -327,7 +245,7 @@ generate_vless_reality_link_from_config() {
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra字段提取Reality参数
     local dest=$(echo "$extra" | jq -r '.dest // ""')
@@ -348,11 +266,10 @@ generate_vless_reality_link_from_config() {
         sni=$(echo "$dest" | cut -d':' -f1)
     fi
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # 构建VLESS Reality链接
-    local share_link="vless://${uuid}@${server_host}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(urlencode "$remark")"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(urlencode "$remark")"
 
     echo "$share_link"
 }
@@ -366,7 +283,7 @@ generate_vless_tls_link_from_config() {
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
     local security=$(echo "$node_json" | jq -r '.security // "none"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 检查是否有TLS
     if [[ "$security" != "tls" ]]; then
@@ -379,11 +296,10 @@ generate_vless_tls_link_from_config() {
     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
     local grpc_service=$(echo "$extra" | jq -r '.grpc_service // ""')
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # 构建链接
-    local share_link="vless://${uuid}@${server_host}:${port}?encryption=none&security=tls&type=${transport}"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&security=tls&type=${transport}"
 
     if [[ -n "$tls_domain" ]]; then
         share_link+="&sni=${tls_domain}"
@@ -410,16 +326,15 @@ generate_vless_plain_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取参数
     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
     local grpc_service=$(echo "$extra" | jq -r '.grpc_service // ""')
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
-    local share_link="vless://${uuid}@${server_host}:${port}?encryption=none&type=${transport}"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&type=${transport}"
 
     if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
         share_link+="&path=$(urlencode "$ws_path")"
@@ -442,22 +357,21 @@ generate_vmess_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取参数
     local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
     local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # VMess JSON格式
     local vmess_json=$(cat <<EOF
 {
   "v": "2",
   "ps": "${remark}",
-  "add": "${server_host}",
+  "add": "${server_ip}",
   "port": ${port},
   "id": "${uuid}",
   "aid": ${alter_id},
@@ -488,19 +402,18 @@ generate_trojan_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取参数
     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     local sni="${tls_domain}"
     if [[ -z "$sni" ]]; then
-        sni=$server_host
+        sni=$server_ip
     fi
 
-    local share_link="trojan://${password}@${server_host}:${port}?security=tls&sni=${sni}&type=${transport}#$(urlencode "$remark")"
+    local share_link="trojan://${password}@${server_ip}:${port}?security=tls&sni=${sni}&type=${transport}#$(urlencode "$remark")"
 
     echo "$share_link"
 }
@@ -512,18 +425,17 @@ generate_ss_link_from_config() {
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取cipher
     local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # SIP002格式
     local userinfo="${cipher}:${password}"
     local encoded=$(base64_encode "$userinfo")
 
-    local share_link="ss://${encoded}@${server_host}:${port}#$(urlencode "$remark")"
+    local share_link="ss://${encoded}@${server_ip}:${port}#$(urlencode "$remark")"
 
     echo "$share_link"
 }
@@ -587,6 +499,8 @@ generate_clash_config() {
     local user_id="$2"
     local user_password="$3"
 
+    local server_ip=$(get_public_ip)
+
     # 验证必需参数
     if [[ -z "$user_id" ]]; then
         echo "# ERROR: user_id is required" >&2
@@ -631,7 +545,6 @@ EOF
         local transport=$(echo "$node" | jq -r '.transport // "tcp"')
         local extra=$(echo "$node" | jq -r '.extra')
         local node_name_raw=$(echo "$node" | jq -r '.name // "未命名"')
-        local node_host=$(resolve_subscription_host "$node")
 
         # 调试信息
         echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
@@ -666,7 +579,7 @@ EOF
 
                     node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     network: tcp
@@ -686,7 +599,7 @@ EOF
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
                     node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     udp: true
@@ -708,7 +621,7 @@ EOF
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
                     node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     udp: true"
@@ -742,7 +655,7 @@ EOF
 
                 node_config="  - name: \"${node_name}\"
     type: vmess
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     alterId: ${alter_id}
@@ -768,7 +681,7 @@ EOF
                 local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                 node_config="  - name: \"${node_name}\"
     type: trojan
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     password: ${user_password}
     udp: true
@@ -800,7 +713,7 @@ EOF
                 esac
                 node_config="  - name: \"${node_name}\"
     type: ss
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     cipher: ${cipher}
     password: ${user_password}
@@ -1040,6 +953,7 @@ show_node_share_link() {
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         print_success "共生成 $link_count 个用户链接"
     fi
+    echo ""
 }
 
 # 生成订阅（绑定用户版）
@@ -1371,13 +1285,7 @@ generate_subscription_with_user() {
 
     read -p "请输入订阅访问域名或IP [留空使用服务器IP]: " sub_domain
     if [[ -z "$sub_domain" ]]; then
-        sub_domain=$(get_subscription_domain_hint)
-    fi
-    if [[ -z "$sub_domain" ]]; then
         sub_domain=$(get_public_ip)
-    fi
-    if [[ -z "$sub_domain" ]]; then
-        sub_domain="127.0.0.1"
     fi
 
     read -p "请输入订阅端口 [默认: 8080]: " sub_port
@@ -1581,6 +1489,8 @@ show_subscription() {
         printf "%-4s %-20s %-15s %-12s %-15s %-15s\n" "$index" "$name" "$user" "$type_name" "$expire_display" "$traffic_display"
         ((index++))
     done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
+
+    echo ""
 }
 
 # 查看订阅链接(显示实际访问URL)
@@ -1605,11 +1515,8 @@ show_subscription_links() {
     fi
 
     # 获取服务器IP
-    local server_host=$(get_subscription_domain_hint)
-    if [[ -z "$server_host" ]]; then
-        server_host=$(get_public_ip)
-    fi
-    if [[ -z "$server_host" ]]; then
+    local server_ip=$(get_public_ip)
+    if [[ -z "$server_ip" ]]; then
         print_error "无法获取服务器IP"
         return 1
     fi
@@ -1642,22 +1549,19 @@ show_subscription_links() {
         # 获取订阅端口
         local sub_port=$(cat "${DATA_DIR}/sub_port.txt" 2>/dev/null || echo "8080")
 
-        # 使用实际文件构建访问URL
-        local sub_file_path=$(echo "$sub" | jq -r '.file // empty')
-        local resolved_file=""
-        if [[ -n "$sub_file_path" && -f "$sub_file_path" ]]; then
-            resolved_file="$sub_file_path"
-        else
-            resolved_file=$(find_subscription_file "$name" 2>/dev/null)
-        fi
-
+        # 构建访问URL (使用/sub/路径，与订阅服务器一致)
         local access_url=""
-        if [[ -n "$resolved_file" && -f "$resolved_file" ]]; then
-            local filename=$(basename "$resolved_file")
-            access_url="http://${server_host}:${sub_port}/sub/${filename}"
-        elif [[ -n "$url" ]]; then
-            access_url="$url"
-        fi
+        case "$type" in
+            general|1)
+                access_url="http://${server_ip}:${sub_port}/sub/${name}.txt"
+                ;;
+            raw|2)
+                access_url="http://${server_ip}:${sub_port}/sub/${name}_raw.txt"
+                ;;
+            clash|3)
+                access_url="http://${server_ip}:${sub_port}/sub/${name}_clash.yaml"
+                ;;
+        esac
 
         echo -e "${YELLOW}[$index] $name${NC} (用户: ${CYAN}$username${NC})"
         if [[ -n "$access_url" ]]; then
@@ -1843,13 +1747,7 @@ regenerate_subscription() {
 
     # 更新订阅信息（更新时间、文件路径和URL）
     local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-    local server_ip=$(get_subscription_domain_hint)
-    if [[ -z "$server_ip" ]]; then
-        server_ip=$(get_public_ip)
-    fi
-    if [[ -z "$server_ip" ]]; then
-        server_ip="127.0.0.1"
-    fi
+    local server_ip=$(get_public_ip)
     local sub_filename=$(basename "$sub_file")
     local sub_url="http://${server_ip}:${port}/sub/${sub_filename}"
 
@@ -2050,7 +1948,6 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     try:
-        socketserver.TCPServer.allow_reuse_address = True
         with socketserver.TCPServer(("", PORT), SubscriptionHandler) as httpd:
             print(f"[订阅服务] 运行在端口 {PORT}")
             print(f"[订阅服务] 文件目录: {DIRECTORY}")

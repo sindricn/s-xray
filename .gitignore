@@ -5,7 +5,4 @@
 claudedocs/
 
 # Xray 官方文档目录（仅本地使用）
-/docs/
-
-AGENTS.md 
-.DS_Store
+/docs/ 
