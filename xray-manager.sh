@@ -1292,8 +1292,6 @@ menu_subscription() {
 }
 
 # 更新订阅内容菜单
-# 说明：直接复用 generate_subscription_with_user 函数
-# 该函数会自动检测订阅是否已存在，如果存在则更新
 update_subscription_content_menu() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
@@ -1305,26 +1303,124 @@ update_subscription_content_menu() {
     echo -e "  - 用户绑定的节点发生变化"
     echo -e "  - 需要同步最新的节点信息到订阅"
     echo ""
-    echo -e "${CYAN}使用说明：${NC}"
-    echo -e "  1. 选择要更新订阅的用户"
-    echo -e "  2. 选择订阅类型"
-    echo -e "  3. 系统会自动检测该用户的该类型订阅"
-    echo -e "  4. 如果订阅已存在，会提示是否更新"
-    echo -e "  5. 确认后自动重新生成订阅内容"
+
+    echo -e "${GREEN}1.${NC} 更新所有用户订阅"
+    echo -e "${GREEN}2.${NC} 更新单个用户订阅"
+    echo -e "${GREEN}0.${NC} 返回"
     echo ""
+    read -p "请选择操作 [0-2]: " choice
 
-    read -p "按 Enter 键继续，或输入 0 返回: " continue_choice
-    if [[ "$continue_choice" == "0" ]]; then
-        return 0
-    fi
+    case $choice in
+        1)
+            # 更新所有用户订阅
+            echo ""
+            print_info "开始更新所有用户订阅..."
+            echo ""
 
-    # 直接调用 generate_subscription_with_user
-    # 该函数内部会：
-    # 1. 让用户选择用户和订阅类型
-    # 2. 检查是否已存在该用户+类型的订阅
-    # 3. 如果存在，询问是否更新
-    # 4. 确认后重新生成订阅内容
-    generate_subscription_with_user
+            if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
+                print_error "订阅元数据文件不存在"
+                return 1
+            fi
+
+            # 获取所有有订阅的用户ID（去重）
+            local all_user_ids=$(jq -r '.subscriptions[].user_id' "$SUBSCRIPTION_META_FILE" 2>/dev/null | sort -u)
+
+            if [[ -z "$all_user_ids" ]]; then
+                print_warning "没有找到任何订阅"
+                return 0
+            fi
+
+            local total_users=$(echo "$all_user_ids" | wc -l)
+            print_info "找到 $total_users 个用户有订阅"
+            echo ""
+
+            local user_count=0
+            while IFS= read -r user_id; do
+                [[ -z "$user_id" ]] && continue
+                ((user_count++))
+
+                local username=$(jq -r ".users[] | select(.id == \"$user_id\") | .username // .email // \"未知用户\"" "$USERS_FILE" 2>/dev/null)
+                echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${YELLOW}[$user_count/$total_users] 用户: $username${NC}"
+                echo ""
+
+                update_user_subscriptions "$user_id"
+                echo ""
+            done <<< "$all_user_ids"
+
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            print_success "所有用户订阅更新完成！"
+            ;;
+
+        2)
+            # 更新单个用户订阅
+            echo ""
+            print_info "选择要更新订阅的用户"
+            echo ""
+
+            if [[ ! -f "$USERS_FILE" ]]; then
+                print_error "用户文件不存在"
+                return 1
+            fi
+
+            local user_count=$(jq -r '.users | length' "$USERS_FILE" 2>/dev/null)
+            if [[ -z "$user_count" || "$user_count" -eq 0 ]]; then
+                print_error "没有可用用户"
+                return 1
+            fi
+
+            # 显示用户列表
+            echo -e "${YELLOW}用户列表：${NC}"
+            local index=1
+            while IFS= read -r user; do
+                [[ -z "$user" || "$user" == "null" ]] && continue
+
+                local uid=$(echo "$user" | jq -r '.id')
+                local uname=$(echo "$user" | jq -r '.username // .email // "unknown"')
+
+                # 统计该用户的订阅数
+                local sub_count=0
+                if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
+                    sub_count=$(jq -r ".subscriptions[] | select(.user_id == \"$uid\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null | wc -l)
+                fi
+
+                printf "${CYAN}[%d]${NC} ${YELLOW}%s${NC} - UUID: %s - 订阅数: %d\n" "$index" "$uname" "${uid:0:16}..." "$sub_count"
+                ((index++))
+            done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
+
+            echo ""
+            read -p "请输入用户序号: " user_index
+
+            # 验证输入
+            if [[ ! "$user_index" =~ ^[0-9]+$ ]] || [[ "$user_index" -lt 1 ]] || [[ "$user_index" -gt "$((index-1))" ]]; then
+                print_error "无效的序号"
+                return 1
+            fi
+
+            local user=$(jq -c ".users[$((user_index-1))]" "$USERS_FILE" 2>/dev/null)
+            if [[ -z "$user" || "$user" == "null" ]]; then
+                print_error "用户不存在"
+                return 1
+            fi
+
+            local user_id=$(echo "$user" | jq -r '.id')
+            local username=$(echo "$user" | jq -r '.username // .email // "unknown"')
+
+            echo ""
+            print_info "正在更新用户 $username 的所有订阅..."
+            echo ""
+
+            update_user_subscriptions "$user_id"
+            ;;
+
+        0)
+            return 0
+            ;;
+
+        *)
+            print_error "无效选择"
+            ;;
+    esac
 }
 
 # 修改订阅配置菜单
