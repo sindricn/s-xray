@@ -176,6 +176,12 @@ remove_dependencies() {
 
 detect_system
 
+# 确保stdin可用
+if [[ ! -t 0 ]]; then
+    print_warning "检测到stdin不可用，尝试重新打开..."
+    exec < /dev/tty
+fi
+
 clear
 echo -e "${CYAN}"
 cat << "EOF"
@@ -189,6 +195,9 @@ echo -e "${NC}"
 echo -e "${CYAN}=====================================${NC}"
 echo -e "${CYAN}    Xray-Core 管理脚本卸载程序${NC}"
 echo -e "${CYAN}=====================================${NC}"
+echo ""
+
+print_info "卸载程序已启动"
 echo ""
 
 # 卸载级别选择菜单
@@ -212,7 +221,7 @@ echo ""
 echo -e "${CYAN}0.${NC} 取消卸载"
 echo ""
 
-read -p "请选择 [0-3]: " uninstall_level
+read -r -p "请选择 [0-3]: " uninstall_level
 
 case $uninstall_level in
     0)

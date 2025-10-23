@@ -1821,15 +1821,30 @@ menu_script() {
                     fi
                     local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
 
+                    local uninstall_script=""
                     if [[ -f "${script_dir}/uninstall.sh" ]]; then
-                        log_info "执行卸载脚本: ${script_dir}/uninstall.sh"
-                        bash "${script_dir}/uninstall.sh"
+                        uninstall_script="${script_dir}/uninstall.sh"
                     elif [[ -f "/opt/s-xray/uninstall.sh" ]]; then
-                        log_info "执行卸载脚本: /opt/s-xray/uninstall.sh"
-                        bash "/opt/s-xray/uninstall.sh"
+                        uninstall_script="/opt/s-xray/uninstall.sh"
+                    fi
+
+                    if [[ -n "$uninstall_script" ]]; then
+                        echo ""
+                        print_info "即将启动卸载程序..."
+                        print_info "脚本路径: $uninstall_script"
+                        echo ""
+                        sleep 1
+
+                        # 使用 exec 替换当前进程，确保stdin正确传递
+                        exec bash "$uninstall_script"
                     else
-                        log_error "未找到卸载脚本"
-                        log_info "请手动运行: bash /opt/s-xray/uninstall.sh"
+                        print_error "未找到卸载脚本"
+                        echo ""
+                        echo -e "${YELLOW}可能的位置：${NC}"
+                        echo -e "  - ${script_dir}/uninstall.sh"
+                        echo -e "  - /opt/s-xray/uninstall.sh"
+                        echo ""
+                        print_info "请手动运行: bash <脚本路径>/uninstall.sh"
                     fi
                 else
                     print_info "已取消卸载"
