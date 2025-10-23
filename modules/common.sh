@@ -200,6 +200,35 @@ confirm() {
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
+# 确保 JSON 数据文件存在，不存在时写入默认内容
+ensure_json_file() {
+    local target_file="$1"
+    local default_payload="${2:-{}}"
+
+    # 已存在则直接返回
+    if [[ -f "$target_file" ]]; then
+        return 0
+    fi
+
+    local target_dir
+    target_dir="$(dirname "$target_file")"
+
+    # 确保所在目录存在
+    if [[ ! -d "$target_dir" ]]; then
+        if ! mkdir -p "$target_dir" 2>/dev/null; then
+            error_exit "无法创建数据目录: $target_dir"
+        fi
+    fi
+
+    # 写入默认内容
+    if printf '%s\n' "$default_payload" > "$target_file"; then
+        log_debug "已初始化数据文件: $target_file"
+        return 0
+    fi
+
+    error_exit "无法初始化数据文件: $target_file"
+}
+
 # IP 地址验证
 validate_ip() {
     local ip=$1

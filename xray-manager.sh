@@ -85,15 +85,13 @@ init_data_dir() {
     mkdir -p "$DATA_DIR"
     mkdir -p "$SUBSCRIPTION_DIR"
 
-    # 初始化用户文件
-    if [[ ! -f "$USERS_FILE" ]]; then
-        echo '{"users":[]}' > "$USERS_FILE"
-    fi
-
-    # 初始化节点文件
-    if [[ ! -f "$NODES_FILE" ]]; then
-        echo '{"nodes":[]}' > "$NODES_FILE"
-    fi
+    # 核心数据文件初始化，缺失时写入空结构
+    ensure_json_file "$USERS_FILE" '{"users":[]}'
+    ensure_json_file "$NODES_FILE" '{"nodes":[]}'
+    ensure_json_file "$NODE_USERS_FILE" '{"bindings":[]}'
+    ensure_json_file "${DATA_DIR}/subscriptions.json" '{"subscriptions":[]}'
+    ensure_json_file "${DATA_DIR}/subscription_metadata.json" '{"subscriptions":[]}'
+    ensure_json_file "${DATA_DIR}/outbounds.json" '{"outbounds":[]}'
 }
 
 # 获取 Xray 状态信息
