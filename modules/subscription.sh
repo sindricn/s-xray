@@ -10,6 +10,28 @@
 # 订阅元数据文件
 SUBSCRIPTION_META_FILE="${DATA_DIR}/subscription_metadata.json"
 
+# 获取用户绑定的节点端口列表
+# 参数: $1=user_id
+# 返回: 通过user_node_ports数组返回端口列表
+get_user_bound_ports() {
+    local user_id="$1"
+    user_node_ports=()
+
+    if [[ -z "$user_id" || ! -f "$NODE_USERS_FILE" ]]; then
+        return 0
+    fi
+
+    while IFS= read -r binding; do
+        local bport=$(echo "$binding" | jq -r '.port')
+        local users=$(echo "$binding" | jq -r '.users[]')
+
+        # 检查用户是否在该节点的用户列表中
+        if echo "$users" | grep -q "$user_id"; then
+            user_node_ports+=("$bport")
+        fi
+    done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
+}
+
 # 查找订阅文件的实际路径
 # 参数: 订阅基础名称 (不带后缀)
 # 返回: 实际文件路径，如果不存在返回空
@@ -1268,17 +1290,7 @@ generate_subscription_with_user() {
 
     # 获取用户绑定的节点列表
     local user_node_ports=()
-    if [[ -f "$NODE_USERS_FILE" ]]; then
-        while IFS= read -r binding; do
-            local bport=$(echo "$binding" | jq -r '.port')
-            local users=$(echo "$binding" | jq -r '.users[]')
-
-            # 检查用户是否在该节点的用户列表中
-            if echo "$users" | grep -q "$sub_user_id"; then
-                user_node_ports+=("$bport")
-            fi
-        done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
-    fi
+    get_user_bound_ports "$sub_user_id"
 
     if [[ ${#user_node_ports[@]} -eq 0 ]]; then
         print_warning "用户 $sub_user_email 未绑定任何节点"
@@ -1873,24 +1885,25 @@ regenerate_subscription() {
 
         "clash")
             # Clash YAML格式
-            # 获取用户绑定的节点
+            # 获取用户绑定的节点（使用统一函数）
             local user_node_ports=()
             if [[ -n "$user_id" ]]; then
-                while IFS= read -r port; do
-                    [[ -n "$port" ]] && user_node_ports+=("$port")
-                done < <(jq -r ".bindings[] | select(.users[] == \"$user_id\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
+                get_user_bound_ports "$user_id"
+            else
+                # 没有绑定用户，使用所有节点
+                while IFS= read -r node; do
+                    user_node_ports+=($(echo "$node" | jq -r '.port'))
+                done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
             fi
 
             # 收集节点JSON数组
             local nodes_json_array="[]"
-            if [[ ${#user_node_ports[@]} -gt 0 ]]; then
-                for port in "${user_node_ports[@]}"; do
-                    local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
-                    if [[ -n "$node" && "$node" != "null" ]]; then
-                        nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
-                    fi
-                done
-            fi
+            for port in "${user_node_ports[@]}"; do
+                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                if [[ -n "$node" && "$node" != "null" ]]; then
+                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
+                fi
+            done
 
             # 验证是否有节点数据
             local node_count=$(echo "$nodes_json_array" | jq 'length')
