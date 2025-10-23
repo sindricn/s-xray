@@ -1388,33 +1388,67 @@ generate_singbox_config() {
         }
     ]')
 
+    # 创建 selector 代理组
+    local selector_outbound=$(jq -n \
+        --argjson proxy_tags "$proxy_tags" \
+        '{
+            type: "selector",
+            tag: "🌏️主代理",
+            outbounds: ($proxy_tags + ["direct"]),
+            default: $proxy_tags[0]
+        }')
+
+    # 创建 urltest 自动选择组
+    local urltest_outbound=$(jq -n \
+        --argjson proxy_tags "$proxy_tags" \
+        '{
+            type: "urltest",
+            tag: "♾️自动选择",
+            outbounds: $proxy_tags,
+            url: "http://www.gstatic.com/generate_204",
+            interval: "5m",
+            tolerance: 50
+        }')
+
+    # 插入代理组到 outbounds 开头
+    outbounds=$(echo "$outbounds" | jq --argjson selector "$selector_outbound" --argjson urltest "$urltest_outbound" \
+        '. = [$selector, $urltest] + .')
+
     # 生成完整的 sing-box 配置
     jq -n \
         --argjson outbounds "$outbounds" \
-        --argjson proxy_tags "$proxy_tags" \
         '{
             log: {
-                level: "info",
+                disabled: false,
+                level: "error",
                 timestamp: true
             },
             dns: {
                 servers: [
                     {
-                        tag: "google",
-                        address: "tls://8.8.8.8"
+                        tag: "dns-remote",
+                        address: "https://223.5.5.5/dns-query",
+                        strategy: "ipv4_only",
+                        detour: "direct"
                     },
                     {
-                        tag: "local",
+                        tag: "dns-local",
                         address: "223.5.5.5",
+                        strategy: "ipv4_only",
                         detour: "direct"
+                    },
+                    {
+                        tag: "dns-block",
+                        address: "rcode://refused"
                     }
                 ],
                 rules: [
                     {
-                        geosite: "cn",
-                        server: "local"
+                        outbound: ["🌏️主代理", "♾️自动选择", "direct"],
+                        server: "dns-local"
                     }
                 ],
+                final: "dns-remote",
                 strategy: "ipv4_only"
             },
             inbounds: [
@@ -1423,6 +1457,17 @@ generate_singbox_config() {
                     tag: "mixed-in",
                     listen: "127.0.0.1",
                     listen_port: 2080,
+                    sniff: true
+                },
+                {
+                    type: "tun",
+                    tag: "tun-in",
+                    interface_name: "singtun0",
+                    address: ["172.19.0.1/30"],
+                    auto_route: true,
+                    strict_route: true,
+                    stack: "system",
+                    mtu: 9000,
                     sniff: true
                 }
             ],
@@ -1434,19 +1479,15 @@ generate_singbox_config() {
                         outbound: "dns-out"
                     },
                     {
-                        geosite: "cn",
-                        outbound: "direct"
-                    },
-                    {
-                        geoip: "cn",
-                        outbound: "direct"
-                    },
-                    {
                         ip_is_private: true,
+                        outbound: "direct"
+                    },
+                    {
+                        domain_suffix: [".cn"],
                         outbound: "direct"
                     }
                 ],
-                final: $proxy_tags[0],
+                final: "🌏️主代理",
                 auto_detect_interface: true
             }
         }'
