@@ -1292,7 +1292,8 @@ menu_subscription() {
 }
 
 # 更新订阅内容菜单
-# 复用 generate_subscription_with_user 的更新逻辑
+# 说明：直接复用 generate_subscription_with_user 函数
+# 该函数会自动检测订阅是否已存在，如果存在则更新
 update_subscription_content_menu() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
@@ -1304,121 +1305,26 @@ update_subscription_content_menu() {
     echo -e "  - 用户绑定的节点发生变化"
     echo -e "  - 需要同步最新的节点信息到订阅"
     echo ""
-
-    echo -e "${GREEN}1.${NC} 一键更新所有订阅内容"
-    echo -e "${GREEN}2.${NC} 更新单个订阅内容"
-    echo -e "${GREEN}0.${NC} 返回"
+    echo -e "${CYAN}使用说明：${NC}"
+    echo -e "  1. 选择要更新订阅的用户"
+    echo -e "  2. 选择订阅类型"
+    echo -e "  3. 系统会自动检测该用户的该类型订阅"
+    echo -e "  4. 如果订阅已存在，会提示是否更新"
+    echo -e "  5. 确认后自动重新生成订阅内容"
     echo ""
-    read -p "请选择操作 [0-2]: " choice
 
-    case $choice in
-        1)
-            # 一键更新所有订阅内容
-            echo ""
-            print_info "开始更新所有订阅内容..."
+    read -p "按 Enter 键继续，或输入 0 返回: " continue_choice
+    if [[ "$continue_choice" == "0" ]]; then
+        return 0
+    fi
 
-            local sub_db="${DATA_DIR}/subscriptions.json"
-            local sub_meta="${DATA_DIR}/subscription_meta.json"
-            if [[ ! -f "$sub_db" ]] || [[ ! -f "$sub_meta" ]]; then
-                print_error "订阅数据库不存在"
-                return 1
-            fi
-
-            local sub_count=$(jq '.subscriptions | length' "$sub_db" 2>/dev/null)
-            if [[ -z "$sub_count" || "$sub_count" -eq 0 ]]; then
-                print_warning "没有订阅需要更新"
-                return 0
-            fi
-
-            local updated_count=0
-            local failed_count=0
-
-            # 遍历所有订阅，通过元数据获取用户ID和类型
-            while IFS= read -r sub_meta_entry; do
-                local sub_name=$(echo "$sub_meta_entry" | jq -r '.name')
-                local user_id=$(echo "$sub_meta_entry" | jq -r '.user_id')
-                local sub_type=$(echo "$sub_meta_entry" | jq -r '.type')
-
-                echo ""
-                print_info "正在更新: $sub_name (类型: $sub_type)"
-
-                # 调用自动更新函数（复用 generate_subscription_with_user 逻辑）
-                if update_subscription_by_metadata "$sub_name" "$user_id" "$sub_type"; then
-                    ((updated_count++))
-                    print_success "✓ $sub_name"
-                else
-                    ((failed_count++))
-                    print_error "✗ $sub_name"
-                fi
-            done < <(jq -c '.subscriptions[]' "$sub_meta" 2>/dev/null)
-
-            echo ""
-            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            print_success "批量更新完成!"
-            echo -e "${YELLOW}成功:${NC} $updated_count"
-            if [[ $failed_count -gt 0 ]]; then
-                echo -e "${RED}失败:${NC} $failed_count"
-            fi
-            ;;
-        2)
-            # 更新单个订阅内容
-            echo ""
-            show_subscription
-            echo ""
-            read -p "请输入要更新的订阅名称: " sub_name
-
-            if [[ -z "$sub_name" ]]; then
-                print_error "订阅名称不能为空"
-                return 1
-            fi
-
-            # 从元数据获取订阅信息
-            local sub_meta="${DATA_DIR}/subscription_meta.json"
-            if [[ ! -f "$sub_meta" ]]; then
-                print_error "订阅元数据不存在"
-                return 1
-            fi
-
-            local sub_meta_entry=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$sub_meta" 2>/dev/null)
-            if [[ -z "$sub_meta_entry" ]]; then
-                print_error "订阅不存在: $sub_name"
-                return 1
-            fi
-
-            local user_id=$(echo "$sub_meta_entry" | jq -r '.user_id')
-            local sub_type=$(echo "$sub_meta_entry" | jq -r '.type')
-
-            echo ""
-            print_info "正在重新生成订阅内容..."
-            print_info "订阅类型: $sub_type"
-            echo ""
-
-            # 调用自动更新函数（复用 generate_subscription_with_user 逻辑）
-            if update_subscription_by_metadata "$sub_name" "$user_id" "$sub_type"; then
-                echo ""
-                print_success "订阅内容已更新: $sub_name"
-
-                # 显示订阅信息
-                local sub_db="${DATA_DIR}/subscriptions.json"
-                local sub_info=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$sub_db" 2>/dev/null)
-                if [[ -n "$sub_info" ]]; then
-                    local sub_url=$(echo "$sub_info" | jq -r '.url')
-                    echo ""
-                    echo -e "${CYAN}订阅链接:${NC} ${GREEN}$sub_url${NC}"
-                fi
-            else
-                echo ""
-                print_error "订阅内容更新失败"
-                return 1
-            fi
-            ;;
-        0)
-            return 0
-            ;;
-        *)
-            print_error "无效选择"
-            ;;
-    esac
+    # 直接调用 generate_subscription_with_user
+    # 该函数内部会：
+    # 1. 让用户选择用户和订阅类型
+    # 2. 检查是否已存在该用户+类型的订阅
+    # 3. 如果存在，询问是否更新
+    # 4. 确认后重新生成订阅内容
+    generate_subscription_with_user
 }
 
 # 修改订阅配置菜单
