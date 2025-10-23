@@ -1269,24 +1269,147 @@ menu_subscription() {
         echo -e "${GREEN}1.${NC} 查看节点链接"
         echo -e "${GREEN}2.${NC} 生成订阅链接"
         echo -e "${GREEN}3.${NC} 查看订阅链接"
-        echo -e "${GREEN}4.${NC} 修改订阅配置"
-        echo -e "${GREEN}5.${NC} 删除订阅"
+        echo -e "${GREEN}4.${NC} 更新订阅链接"
+        echo -e "${GREEN}5.${NC} 修改订阅配置"
+        echo -e "${GREEN}6.${NC} 删除订阅"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-5]: " choice
+        read -p "请选择操作 [0-6]: " choice
 
         case $choice in
             1) show_node_share_link ;;  # 查看单个节点链接
             2) generate_subscription_with_user ;;  # 生成订阅链接（支持用户绑定）
             3) show_subscription_links ;;      # 查看所有订阅链接
-            4) modify_subscription_menu ;;  # 修改订阅配置
-            5) delete_subscription_smart ;;  # 智能删除订阅（支持批量）
+            4) update_subscription_links_menu ;;  # 更新订阅链接
+            5) modify_subscription_menu ;;  # 修改订阅配置
+            6) delete_subscription_smart ;;  # 智能删除订阅（支持批量）
             0) break ;;
             *) print_error "无效选择" ;;
         esac
 
         read -p "按 Enter 键继续..."
     done
+}
+
+# 更新订阅链接菜单
+update_subscription_links_menu() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      更新订阅链接                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${GREEN}1.${NC} 一键更新所有订阅链接"
+    echo -e "${GREEN}2.${NC} 更新单个订阅链接"
+    echo -e "${GREEN}0.${NC} 返回"
+    echo ""
+    read -p "请选择操作 [0-2]: " choice
+
+    case $choice in
+        1)
+            # 一键更新所有订阅
+            echo ""
+            print_info "开始更新所有订阅链接..."
+
+            local sub_db="${DATA_DIR}/subscriptions.json"
+            if [[ ! -f "$sub_db" ]]; then
+                print_error "订阅数据库不存在"
+                return 1
+            fi
+
+            local sub_count=$(jq '.subscriptions | length' "$sub_db" 2>/dev/null)
+            if [[ -z "$sub_count" || "$sub_count" -eq 0 ]]; then
+                print_warning "没有订阅需要更新"
+                return 0
+            fi
+
+            # 获取当前订阅端口和域名
+            local sub_port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
+            local server_ip=$(get_subscription_domain_hint)
+            if [[ -z "$server_ip" ]]; then
+                server_ip=$(get_public_ip)
+            fi
+            if [[ -z "$server_ip" ]]; then
+                server_ip="127.0.0.1"
+            fi
+
+            local updated_count=0
+            local failed_count=0
+
+            while IFS= read -r sub; do
+                local sub_name=$(echo "$sub" | jq -r '.name')
+                local sub_file=$(echo "$sub" | jq -r '.file')
+
+                if [[ -f "$sub_file" ]]; then
+                    local sub_filename=$(basename "$sub_file")
+                    local new_url="http://${server_ip}:${sub_port}/sub/${sub_filename}"
+
+                    # 更新数据库中的URL
+                    jq --arg name "$sub_name" --arg url "$new_url" \
+                       '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
+                       "$sub_db" > "${sub_db}.tmp"
+                    mv "${sub_db}.tmp" "$sub_db"
+
+                    ((updated_count++))
+                    print_success "已更新: $sub_name"
+                else
+                    ((failed_count++))
+                    print_warning "跳过(文件不存在): $sub_name"
+                fi
+            done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
+
+            echo ""
+            print_success "更新完成! 成功: $updated_count, 跳过: $failed_count"
+            ;;
+        2)
+            # 更新单个订阅
+            echo ""
+            show_subscription
+            echo ""
+            read -p "请输入要更新的订阅名称: " sub_name
+
+            if [[ -z "$sub_name" ]]; then
+                print_error "订阅名称不能为空"
+                return 1
+            fi
+
+            local sub_file=$(find_subscription_file "$sub_name")
+            if [[ -z "$sub_file" ]]; then
+                print_error "订阅不存在: $sub_name"
+                return 1
+            fi
+
+            # 获取当前订阅端口和域名
+            local sub_port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
+            local server_ip=$(get_subscription_domain_hint)
+            if [[ -z "$server_ip" ]]; then
+                server_ip=$(get_public_ip)
+            fi
+            if [[ -z "$server_ip" ]]; then
+                server_ip="127.0.0.1"
+            fi
+
+            local sub_filename=$(basename "$sub_file")
+            local new_url="http://${server_ip}:${sub_port}/sub/${sub_filename}"
+
+            # 更新数据库
+            local sub_db="${DATA_DIR}/subscriptions.json"
+            jq --arg name "$sub_name" --arg url "$new_url" \
+               '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
+               "$sub_db" > "${sub_db}.tmp"
+            mv "${sub_db}.tmp" "$sub_db"
+
+            print_success "订阅链接已更新: $sub_name"
+            echo ""
+            echo -e "${CYAN}新链接:${NC} ${GREEN}$new_url${NC}"
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            print_error "无效选择"
+            ;;
+    esac
 }
 
 # 修改订阅配置菜单
@@ -1325,7 +1448,7 @@ modify_subscription_menu() {
         echo ""
 
         echo -e "${GREEN}1.${NC} 修改订阅名称"
-        echo -e "${GREEN}2.${NC} 重新生成订阅内容"
+        echo -e "${GREEN}2.${NC} 修改订阅端口"
         echo -e "${GREEN}0.${NC} 返回"
         echo ""
         echo -e "${YELLOW}提示：流量和有效期请在用户管理中修改${NC}"
@@ -1388,14 +1511,62 @@ modify_subscription_menu() {
                 fi
                 ;;
             2)
-                # 重新生成订阅内容
+                # 修改订阅端口
                 echo ""
-                print_info "重新生成订阅内容..."
-                if regenerate_subscription "$sub_name"; then
-                    print_success "订阅内容已更新"
-                else
-                    print_error "订阅更新失败"
+                local current_port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
+                echo -e "${YELLOW}当前端口:${NC} $current_port"
+                echo ""
+                read -p "请输入新的订阅端口 [1-65535]: " new_port
+
+                if [[ -z "$new_port" ]]; then
+                    print_warning "已取消"
+                    continue
                 fi
+
+                if [[ ! "$new_port" =~ ^[0-9]+$ ]]; then
+                    print_error "端口必须是数字"
+                    continue
+                fi
+
+                if [[ $new_port -lt 1 || $new_port -gt 65535 ]]; then
+                    print_error "端口范围必须在 1-65535 之间"
+                    continue
+                fi
+
+                # 保存新端口
+                echo "$new_port" > "${DATA_DIR}/subscription_port.txt"
+
+                # 重启订阅服务
+                setup_subscription_server "$new_port"
+
+                # 更新所有订阅链接
+                local sub_db="${DATA_DIR}/subscriptions.json"
+                if [[ -f "$sub_db" ]]; then
+                    local server_ip=$(get_subscription_domain_hint)
+                    if [[ -z "$server_ip" ]]; then
+                        server_ip=$(get_public_ip)
+                    fi
+                    if [[ -z "$server_ip" ]]; then
+                        server_ip="127.0.0.1"
+                    fi
+
+                    while IFS= read -r sub_entry; do
+                        local name=$(echo "$sub_entry" | jq -r '.name')
+                        local file=$(echo "$sub_entry" | jq -r '.file')
+                        if [[ -f "$file" ]]; then
+                            local filename=$(basename "$file")
+                            local new_url="http://${server_ip}:${new_port}/sub/${filename}"
+
+                            jq --arg name "$name" --arg url "$new_url" \
+                               '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
+                               "$sub_db" > "${sub_db}.tmp"
+                            mv "${sub_db}.tmp" "$sub_db"
+                        fi
+                    done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
+                fi
+
+                print_success "订阅端口已修改为: $new_port"
+                print_success "所有订阅链接已自动更新"
                 ;;
             0)
                 return 0
