@@ -1269,7 +1269,7 @@ menu_subscription() {
         echo -e "${GREEN}1.${NC} 查看节点链接"
         echo -e "${GREEN}2.${NC} 生成订阅链接"
         echo -e "${GREEN}3.${NC} 查看订阅链接"
-        echo -e "${GREEN}4.${NC} 更新订阅链接"
+        echo -e "${GREEN}4.${NC} 更新订阅内容"
         echo -e "${GREEN}5.${NC} 修改订阅配置"
         echo -e "${GREEN}6.${NC} 删除订阅"
         echo -e "${GREEN}0.${NC} 返回主菜单"
@@ -1280,7 +1280,7 @@ menu_subscription() {
             1) show_node_share_link ;;  # 查看单个节点链接
             2) generate_subscription_with_user ;;  # 生成订阅链接（支持用户绑定）
             3) show_subscription_links ;;      # 查看所有订阅链接
-            4) update_subscription_links_menu ;;  # 更新订阅链接
+            4) update_subscription_content_menu ;;  # 更新订阅内容
             5) modify_subscription_menu ;;  # 修改订阅配置
             6) delete_subscription_smart ;;  # 智能删除订阅（支持批量）
             0) break ;;
@@ -1291,25 +1291,30 @@ menu_subscription() {
     done
 }
 
-# 更新订阅链接菜单
-update_subscription_links_menu() {
+# 更新订阅内容菜单
+update_subscription_content_menu() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      更新订阅链接                    ║${NC}"
+    echo -e "${CYAN}║      更新订阅内容                    ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
+    echo -e "${YELLOW}适用场景：${NC}"
+    echo -e "  - 节点参数变更（端口、密码、协议配置等）"
+    echo -e "  - 用户绑定的节点发生变化"
+    echo -e "  - 需要同步最新的节点信息到订阅"
+    echo ""
 
-    echo -e "${GREEN}1.${NC} 一键更新所有订阅链接"
-    echo -e "${GREEN}2.${NC} 更新单个订阅链接"
+    echo -e "${GREEN}1.${NC} 一键更新所有订阅内容"
+    echo -e "${GREEN}2.${NC} 更新单个订阅内容"
     echo -e "${GREEN}0.${NC} 返回"
     echo ""
     read -p "请选择操作 [0-2]: " choice
 
     case $choice in
         1)
-            # 一键更新所有订阅
+            # 一键更新所有订阅内容
             echo ""
-            print_info "开始更新所有订阅链接..."
+            print_info "开始更新所有订阅内容..."
 
             local sub_db="${DATA_DIR}/subscriptions.json"
             if [[ ! -f "$sub_db" ]]; then
@@ -1323,46 +1328,34 @@ update_subscription_links_menu() {
                 return 0
             fi
 
-            # 获取当前订阅端口和域名
-            local sub_port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-            local server_ip=$(get_subscription_domain_hint)
-            if [[ -z "$server_ip" ]]; then
-                server_ip=$(get_public_ip)
-            fi
-            if [[ -z "$server_ip" ]]; then
-                server_ip="127.0.0.1"
-            fi
-
             local updated_count=0
             local failed_count=0
 
             while IFS= read -r sub; do
                 local sub_name=$(echo "$sub" | jq -r '.name')
-                local sub_file=$(echo "$sub" | jq -r '.file')
 
-                if [[ -f "$sub_file" ]]; then
-                    local sub_filename=$(basename "$sub_file")
-                    local new_url="http://${server_ip}:${sub_port}/sub/${sub_filename}"
+                echo ""
+                print_info "正在更新: $sub_name"
 
-                    # 更新数据库中的URL
-                    jq --arg name "$sub_name" --arg url "$new_url" \
-                       '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
-                       "$sub_db" > "${sub_db}.tmp"
-                    mv "${sub_db}.tmp" "$sub_db"
-
+                if regenerate_subscription "$sub_name" 2>&1 | grep -q "成功\|完成"; then
                     ((updated_count++))
-                    print_success "已更新: $sub_name"
+                    print_success "✓ $sub_name"
                 else
                     ((failed_count++))
-                    print_warning "跳过(文件不存在): $sub_name"
+                    print_error "✗ $sub_name"
                 fi
             done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
 
             echo ""
-            print_success "更新完成! 成功: $updated_count, 跳过: $failed_count"
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            print_success "批量更新完成!"
+            echo -e "${YELLOW}成功:${NC} $updated_count"
+            if [[ $failed_count -gt 0 ]]; then
+                echo -e "${RED}失败:${NC} $failed_count"
+            fi
             ;;
         2)
-            # 更新单个订阅
+            # 更新单个订阅内容
             echo ""
             show_subscription
             echo ""
@@ -1379,29 +1372,27 @@ update_subscription_links_menu() {
                 return 1
             fi
 
-            # 获取当前订阅端口和域名
-            local sub_port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-            local server_ip=$(get_subscription_domain_hint)
-            if [[ -z "$server_ip" ]]; then
-                server_ip=$(get_public_ip)
-            fi
-            if [[ -z "$server_ip" ]]; then
-                server_ip="127.0.0.1"
-            fi
-
-            local sub_filename=$(basename "$sub_file")
-            local new_url="http://${server_ip}:${sub_port}/sub/${sub_filename}"
-
-            # 更新数据库
-            local sub_db="${DATA_DIR}/subscriptions.json"
-            jq --arg name "$sub_name" --arg url "$new_url" \
-               '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
-               "$sub_db" > "${sub_db}.tmp"
-            mv "${sub_db}.tmp" "$sub_db"
-
-            print_success "订阅链接已更新: $sub_name"
             echo ""
-            echo -e "${CYAN}新链接:${NC} ${GREEN}$new_url${NC}"
+            print_info "正在重新生成订阅内容..."
+            echo ""
+
+            if regenerate_subscription "$sub_name"; then
+                echo ""
+                print_success "订阅内容已更新: $sub_name"
+
+                # 显示订阅信息
+                local sub_db="${DATA_DIR}/subscriptions.json"
+                local sub_info=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$sub_db" 2>/dev/null)
+                if [[ -n "$sub_info" ]]; then
+                    local sub_url=$(echo "$sub_info" | jq -r '.url')
+                    echo ""
+                    echo -e "${CYAN}订阅链接:${NC} ${GREEN}$sub_url${NC}"
+                fi
+            else
+                echo ""
+                print_error "订阅内容更新失败"
+                return 1
+            fi
             ;;
         0)
             return 0
