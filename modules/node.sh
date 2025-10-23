@@ -1330,11 +1330,17 @@ save_node_info() {
         --argjson extra "$extra_config" \
         '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
 
-    # 读取现有数据
-    local current_data=$(cat "$NODES_FILE")
+    if [[ -z "$node_data" ]]; then
+        print_error "节点信息生成失败"
+        return 1
+    fi
 
-    # 添加新节点
-    echo "$current_data" | jq ".nodes += [$node_data]" > "$NODES_FILE"
+    if ! jq --argjson node "$node_data" '.nodes += [$node]' "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+        print_error "写入节点信息失败"
+        return 1
+    fi
+
+    mv "${NODES_FILE}.tmp" "$NODES_FILE"
 }
 
 # 从数据库删除节点

@@ -26,6 +26,156 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+DEPS=(curl wget unzip jq python3 git)
+declare -a SUMMARY=()
+OS_FAMILY="unknown"
+
+add_summary() {
+    local message="$1"
+    SUMMARY+=("$message")
+}
+
+detect_system() {
+    if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        OS_FAMILY=${ID:-unknown}
+    fi
+    [[ -z "$OS_FAMILY" ]] && OS_FAMILY="unknown"
+}
+
+remove_scripts() {
+    local operated=false
+
+    if [[ -d /opt/s-xray ]]; then
+        print_info "删除管理脚本目录 /opt/s-xray..."
+        rm -rf /opt/s-xray
+        operated=true
+    fi
+
+    for cmd in /usr/local/bin/s-xray /usr/local/bin/xray-manager; do
+        if [[ -f "$cmd" || -L "$cmd" ]]; then
+            print_info "删除全局命令: $cmd"
+            rm -f "$cmd"
+            operated=true
+        fi
+    done
+
+    if [[ "$operated" == true ]]; then
+        print_success "管理脚本程序已卸载"
+        add_summary "管理脚本程序已卸载"
+    else
+        print_info "未检测到可卸载的管理脚本"
+    fi
+}
+
+remove_xray_runtime() {
+    local operated=false
+
+    if systemctl is-active --quiet xray 2>/dev/null; then
+        print_info "停止 Xray 服务..."
+        systemctl stop xray 2>/dev/null || true
+        print_success "Xray 服务已停止"
+        operated=true
+    fi
+
+    if systemctl is-enabled --quiet xray 2>/dev/null; then
+        print_info "禁用 Xray 服务..."
+        systemctl disable xray 2>/dev/null || true
+        operated=true
+    fi
+
+    if [[ -f /etc/systemd/system/xray.service ]]; then
+        print_info "删除 Xray systemd 单元..."
+        rm -f /etc/systemd/system/xray.service
+        systemctl daemon-reload 2>/dev/null || true
+        operated=true
+    fi
+
+    print_info "停止订阅服务..."
+    pkill -f "subscription_server.py" 2>/dev/null || true
+    pkill -f "python.*subscription_server.py" 2>/dev/null || true
+    pkill -f "python.*8080" 2>/dev/null || true
+
+    if [[ -d /usr/local/xray/data ]]; then
+        print_info "删除 Xray 数据目录..."
+        rm -rf /usr/local/xray/data
+        operated=true
+    fi
+
+    if [[ -f /usr/local/xray/config.json ]]; then
+        print_info "删除 Xray 主配置..."
+        rm -f /usr/local/xray/config.json
+        operated=true
+    fi
+
+    if [[ -d /usr/local/xray ]]; then
+        print_info "删除 Xray 核心目录..."
+        rm -rf /usr/local/xray
+        operated=true
+    fi
+
+    if [[ "$operated" == true ]]; then
+        print_success "Xray 核心与配置已卸载"
+        add_summary "Xray 核心与配置已卸载"
+    else
+        print_info "未检测到 Xray 核心或配置文件"
+    fi
+}
+
+remove_dependencies() {
+    local remove_list=()
+    for dep in "${DEPS[@]}"; do
+        if command -v "$dep" >/dev/null 2>&1; then
+            remove_list+=("$dep")
+        fi
+    done
+
+    if [[ ${#remove_list[@]} -eq 0 ]]; then
+        print_info "未检测到需要卸载的依赖包"
+        return 0
+    fi
+
+    print_info "准备卸载依赖包: ${remove_list[*]}"
+
+    case $OS_FAMILY in
+        ubuntu|debian)
+            apt-get remove -y --purge "${remove_list[@]}" >/dev/null 2>&1 || apt-get remove -y --purge "${remove_list[@]}" || true
+            apt-get autoremove -y >/dev/null 2>&1 || true
+            apt-get autoclean -y >/dev/null 2>&1 || true
+            ;;
+        centos|rhel|fedora)
+            local pkg_tool=""
+            if command -v dnf >/dev/null 2>&1; then
+                pkg_tool="dnf"
+            elif command -v yum >/dev/null 2>&1; then
+                pkg_tool="yum"
+            fi
+
+            if [[ -n "$pkg_tool" ]]; then
+                $pkg_tool remove -y "${remove_list[@]}" >/dev/null 2>&1 || true
+                if [[ "$pkg_tool" == "dnf" ]]; then
+                    dnf autoremove -y >/dev/null 2>&1 || true
+                elif [[ "$pkg_tool" == "yum" ]]; then
+                    yum autoremove -y >/dev/null 2>&1 || true
+                fi
+            else
+                print_warning "未检测到可用的包管理器，跳过依赖卸载"
+                return 0
+            fi
+            ;;
+        *)
+            print_warning "当前系统未识别，跳过依赖卸载"
+            return 0
+            ;;
+    esac
+
+    print_success "依赖包已卸载"
+    add_summary "依赖包已卸载 (${remove_list[*]})"
+}
+
+detect_system
+
 clear
 echo -e "${CYAN}"
 cat << "EOF"
@@ -45,20 +195,19 @@ echo ""
 echo -e "${YELLOW}请选择卸载级别：${NC}"
 echo ""
 echo -e "${CYAN}1.${NC} 仅卸载管理脚本"
-echo -e "   - 删除xray-manager.sh及modules目录"
-echo -e "   - ${GREEN}保留${NC} Xray核心"
-echo -e "   - ${GREEN}保留${NC} 所有配置和数据"
+echo -e "   - 删除 xray-manager 脚本与 modules"
+echo -e "   - ${GREEN}保留${NC} Xray 核心"
+echo -e "   - ${GREEN}保留${NC} 配置与数据"
 echo ""
-echo -e "${CYAN}2.${NC} 卸载脚本和配置文件"
-echo -e "   - 删除管理脚本和modules"
-echo -e "   - 删除所有配置文件(nodes.json, users.json等)"
-echo -e "   - ${GREEN}保留${NC} Xray核心程序"
+echo -e "${CYAN}2.${NC} 仅卸载 Xray 核心与配置文件"
+echo -e "   - 停止并删除 Xray 服务"
+echo -e "   - 删除 /usr/local/xray 及数据"
+echo -e "   - ${GREEN}保留${NC} 管理脚本"
 echo ""
 echo -e "${CYAN}3.${NC} 完全卸载"
-echo -e "   - 删除管理脚本和配置"
-echo -e "   - 停止并删除Xray服务"
-echo -e "   - 删除Xray核心程序"
-echo -e "   - ${YELLOW}可选${NC}删除依赖包"
+echo -e "   - 删除管理脚本、Xray 核心与配置"
+echo -e "   - 清理 systemd 服务与订阅进程"
+echo -e "   - 卸载随脚本安装的依赖包"
 echo ""
 echo -e "${CYAN}0.${NC} 取消卸载"
 echo ""
@@ -75,8 +224,8 @@ case $uninstall_level in
         print_info "将执行：仅卸载管理脚本"
         ;;
     2)
-        UNINSTALL_LEVEL="script_config"
-        print_info "将执行：卸载脚本和配置文件"
+        UNINSTALL_LEVEL="xray_only"
+        print_info "将执行：仅卸载 Xray 核心与配置文件"
         ;;
     3)
         UNINSTALL_LEVEL="full"
@@ -99,94 +248,36 @@ fi
 echo ""
 print_info "开始卸载..."
 
-# 级别1和级别2和级别3都需要：删除管理脚本
-if [[ -d /opt/s-xray ]]; then
-    print_info "删除管理脚本和modules..."
-    rm -rf /opt/s-xray
-    print_success "管理脚本已删除"
-fi
+case "$UNINSTALL_LEVEL" in
+    script)
+        remove_scripts
+        ;;
+    xray_only)
+        remove_xray_runtime
+        ;;
+    full)
+        remove_xray_runtime
+        remove_scripts
+        remove_dependencies
+        ;;
+esac
 
-# 级别1：仅卸载脚本（到此结束）
-if [[ "$UNINSTALL_LEVEL" == "script" ]]; then
-    print_success "管理脚本卸载完成！"
-    print_info "Xray核心和配置文件已保留"
-    exit 0
-fi
+if [[ "$UNINSTALL_LEVEL" == "xray_only" || "$UNINSTALL_LEVEL" == "full" ]]; then
+    echo ""
+    print_warning "是否额外清理防火墙规则?"
+    echo -e "  ${YELLOW}提示：${NC}将移除脚本曾开放的端口，请谨慎操作"
+    read -p "清理防火墙规则? [y/N]: " clean_firewall
 
-# 级别2和级别3都需要：删除配置文件
-if [[ -d /usr/local/xray/data ]]; then
-    print_info "删除配置文件..."
-    rm -rf /usr/local/xray/data
-    print_success "配置文件已删除"
-fi
-
-if [[ -f /usr/local/xray/config.json ]]; then
-    rm -f /usr/local/xray/config.json
-fi
-
-# 级别2：卸载脚本和配置（到此结束）
-if [[ "$UNINSTALL_LEVEL" == "script_config" ]]; then
-    print_success "管理脚本和配置文件卸载完成！"
-    print_info "Xray核心程序已保留"
-    exit 0
-fi
-
-# 级别3：完全卸载
-print_info "执行完全卸载..."
-
-# 停止 Xray 服务
-if systemctl is-active --quiet xray 2>/dev/null; then
-    print_info "停止 Xray 服务..."
-    systemctl stop xray
-    print_success "服务已停止"
-fi
-
-# 禁用并删除服务
-if [[ -f /etc/systemd/system/xray.service ]]; then
-    print_info "删除系统服务..."
-    systemctl disable xray 2>/dev/null || true
-    rm -f /etc/systemd/system/xray.service
-    systemctl daemon-reload
-    print_success "服务已删除"
-fi
-
-# 停止订阅服务
-print_info "停止订阅服务..."
-pkill -f "subscription_server.py" 2>/dev/null || true
-pkill -f "python.*8080" 2>/dev/null || true
-print_success "订阅服务已停止"
-
-# 删除 Xray 程序
-if [[ -d /usr/local/xray ]]; then
-    print_info "删除 Xray 核心程序..."
-    rm -rf /usr/local/xray
-    print_success "Xray 核心已删除"
-fi
-
-# 6. 删除全局命令
-print_info "删除全局命令..."
-rm -f /usr/local/bin/s-xray
-rm -f /usr/local/bin/xray-manager
-print_success "全局命令已删除"
-
-# 7. 清理防火墙规则（可选）
-echo ""
-print_warning "是否清理防火墙规则?"
-echo -e "  ${YELLOW}注意：${NC}这将关闭所有由脚本开放的端口"
-read -p "清理防火墙规则? [y/N]: " clean_firewall
-
-if [[ "$clean_firewall" == "y" || "$clean_firewall" == "Y" ]]; then
-    print_info "清理防火墙规则..."
-
-    # 检测防火墙类型
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-        # UFW 防火墙
-        print_info "检测到 UFW 防火墙，请手动检查规则: ufw status numbered"
-    elif command -v firewall-cmd >/dev/null 2>&1; then
-        # Firewalld 防火墙
-        print_info "检测到 Firewalld 防火墙，请手动检查规则: firewall-cmd --list-all"
-    else
-        print_info "未检测到活动的防火墙管理工具"
+    if [[ "$clean_firewall" == "y" || "$clean_firewall" == "Y" ]]; then
+        print_info "检查常见防火墙工具..."
+        if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+            print_info "检测到 UFW，可手动执行: ufw status numbered"
+        elif command -v firewall-cmd >/dev/null 2>&1; then
+            print_info "检测到 firewalld，可手动执行: firewall-cmd --list-all"
+        else
+            print_info "未检测到活动防火墙，无需额外清理"
+        fi
+        add_summary "防火墙规则已检查"
     fi
 fi
 
@@ -196,16 +287,26 @@ echo -e "${GREEN}         卸载完成！${NC}"
 echo -e "${GREEN}=====================================${NC}"
 echo ""
 echo -e "${CYAN}卸载摘要：${NC}"
-echo -e "  ${GREEN}✓${NC} Xray 服务已停止并删除"
-echo -e "  ${GREEN}✓${NC} 管理脚本已删除"
-echo -e "  ${GREEN}✓${NC} 全局命令已删除"
-
-if [[ "$delete_data" == "y" || "$delete_data" == "Y" ]]; then
-    echo -e "  ${GREEN}✓${NC} 用户数据已删除"
+if [[ ${#SUMMARY[@]} -eq 0 ]]; then
+    echo -e "  ${YELLOW}•${NC} 未执行任何资源删除操作"
 else
-    echo -e "  ${YELLOW}!${NC} 用户数据已保留: /usr/local/xray/data/"
-    echo -e "    如需完全清理，请手动删除: ${YELLOW}rm -rf /usr/local/xray${NC}"
+    for item in "${SUMMARY[@]}"; do
+        echo -e "  ${GREEN}•${NC} $item"
+    done
 fi
+
+echo ""
+case "$UNINSTALL_LEVEL" in
+    script)
+        print_info "Xray 核心与配置已保留，可随时重新部署管理脚本。"
+        ;;
+    xray_only)
+        print_info "管理脚本已保留，如需重新部署 Xray，请重新运行安装流程。"
+        ;;
+    full)
+        print_info "已完成彻底卸载，如需再次使用请重新执行安装脚本。"
+        ;;
+esac
 
 echo ""
 echo -e "${CYAN}感谢使用 s-xray 管理脚本！${NC}"

@@ -171,17 +171,27 @@ show_menu() {
     # 获取节点数量
     local node_count=0
     if [[ -f "$NODES_FILE" ]]; then
-        node_count=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "0")
+        node_count=$(jq -r '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "")
+        if [[ -z "$node_count" || ! "$node_count" =~ ^[0-9]+$ ]]; then
+            node_count=0
+        fi
     fi
 
     # 获取用户数量
     local user_count=0
     if [[ -f "$USERS_FILE" ]]; then
-        user_count=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
+        user_count=$(jq -r '.users | length' "$USERS_FILE" 2>/dev/null || echo "")
+        if [[ -z "$user_count" || ! "$user_count" =~ ^[0-9]+$ ]]; then
+            user_count=0
+        fi
     fi
 
     # 获取在线用户数量
-    local online_count=$(get_online_users_count)
+    local online_count="$(get_online_users_count 2>/dev/null)"
+    online_count="${online_count%%$'\n'*}"
+    if [[ -z "$online_count" || ! "$online_count" =~ ^[0-9]+$ ]]; then
+        online_count=0
+    fi
 
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.2    ║${NC}"
@@ -1799,9 +1809,9 @@ menu_script() {
                 echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
                 echo ""
                 echo -e "${YELLOW}即将进入卸载程序，提供以下选项：${NC}"
-                echo -e "  ${CYAN}1.${NC} 仅卸载管理脚本（保留Xray核心和配置）"
-                echo -e "  ${CYAN}2.${NC} 卸载脚本和配置文件（保留Xray核心）"
-                echo -e "  ${CYAN}3.${NC} 完全卸载（包括Xray核心）"
+                echo -e "  ${CYAN}1.${NC} 仅卸载管理脚本（保留 Xray 核心与配置）"
+                echo -e "  ${CYAN}2.${NC} 仅卸载 Xray 核心与配置文件（保留管理脚本）"
+                echo -e "  ${CYAN}3.${NC} 完全卸载（脚本、Xray、配置与依赖）"
                 echo ""
 
                 if confirm "确认进入卸载程序" "n"; then
