@@ -633,8 +633,8 @@ EOF
         local node_name_raw=$(echo "$node" | jq -r '.name // "未命名"')
         local node_host=$(resolve_subscription_host "$node")
 
-        # 调试信息
-        echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
+        # 调试信息 (只在需要时输出)
+        [[ "${DEBUG_MODE:-0}" == "1" ]] && echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
 
         local node_config=""
 
@@ -811,8 +811,8 @@ EOF
         [[ -n "$node_config" ]] && proxy_configs+=("$node_config")
     done < <(echo "$nodes_array" | jq -c '.[]')
 
-    # 调试统计信息
-    echo "# DEBUG: Total processed: $processed_count, Skipped: $skipped_count, Generated: ${#proxy_configs[@]}" >&2
+    # 调试统计信息 (只在需要时输出)
+    [[ "${DEBUG_MODE:-0}" == "1" ]] && echo "# DEBUG: Total processed: $processed_count, Skipped: $skipped_count, Generated: ${#proxy_configs[@]}" >&2
 
     # 验证是否有有效节点
     if [[ ${#proxy_configs[@]} -eq 0 ]]; then
@@ -1336,8 +1336,29 @@ generate_subscription_with_user() {
                 fi
             done
 
-            # 生成Clash配置（捕获错误输出）
-            local clash_output=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>&1)
+            # 验证是否有节点数据
+            local node_count=$(echo "$nodes_json_array" | jq 'length')
+            if [[ "$node_count" -eq 0 ]]; then
+                echo ""
+                print_error "没有找到可用的节点"
+                echo ""
+                echo -e "${YELLOW}可能的原因：${NC}"
+                echo "  1. 用户未绑定任何节点"
+                echo "  2. 节点数据文件不存在或为空"
+                echo "  3. 节点端口匹配失败"
+                echo ""
+                echo -e "${CYAN}建议操作：${NC}"
+                echo "  1. 检查用户绑定的节点: ${NODES_FILE}"
+                echo "  2. 确认节点端口是否正确"
+                echo "  3. 先为用户绑定节点，再生成订阅"
+                echo ""
+                return 1
+            fi
+
+            # 生成Clash配置（分离stdout和stderr）
+            # 创建临时文件存储stderr
+            local clash_stderr_file=$(mktemp)
+            local clash_output=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>"$clash_stderr_file")
             local clash_exit_code=$?
 
             if [[ $clash_exit_code -ne 0 ]]; then
@@ -1345,7 +1366,8 @@ generate_subscription_with_user() {
                 print_error "Clash配置生成失败"
                 echo ""
                 echo -e "${YELLOW}详细信息：${NC}"
-                echo "$clash_output" | grep -E "^#" | sed 's/^# /  /'
+                # 显示所有错误和警告信息
+                cat "$clash_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /'
                 echo ""
                 echo -e "${CYAN}提示：${NC}"
                 echo "  1. Reality 节点需要 public_key 字段"
@@ -1353,10 +1375,29 @@ generate_subscription_with_user() {
                 echo "  3. 检查节点数据结构是否完整"
                 echo "  4. 可以尝试使用【通用订阅】或【原始订阅】格式"
                 echo ""
+
+                # 清理临时文件
+                rm -f "$clash_stderr_file"
                 return 1
             fi
 
+            # 验证生成的配置是否有效
+            if [[ -z "$clash_output" ]]; then
+                echo ""
+                print_error "Clash配置生成为空"
+                echo ""
+                echo -e "${YELLOW}详细信息：${NC}"
+                cat "$clash_stderr_file" | sed 's/^# /  /'
+                echo ""
+                rm -f "$clash_stderr_file"
+                return 1
+            fi
+
+            # 配置有效，直接使用（DEBUG信息已通过条件判断被禁用）
             sub_content="$clash_output"
+
+            # 清理临时文件
+            rm -f "$clash_stderr_file"
             # 文件名格式: {name}_{user_id}_clash.yaml
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_clash.yaml"
             ;;
