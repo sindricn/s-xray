@@ -2128,10 +2128,23 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
 
             if os.path.exists(filepath):
                 self.send_response(200)
-                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+
+                # 根据文件扩展名设置正确的Content-Type
+                if filename.endswith('.yaml') or filename.endswith('.yml'):
+                    content_type = 'text/yaml; charset=utf-8'
+                elif filename.endswith('.json'):
+                    content_type = 'application/json; charset=utf-8'
+                else:
+                    content_type = 'text/plain; charset=utf-8'
+
+                self.send_header('Content-Type', content_type)
                 self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Cache-Control', 'no-cache')
+
+                # 获取文件大小并发送Content-Length
+                file_size = os.path.getsize(filepath)
+                self.send_header('Content-Length', str(file_size))
 
                 # 添加订阅用户信息头
                 user_id = self.get_user_info_from_filename(filename)
@@ -2143,8 +2156,14 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
 
                 self.end_headers()
 
+                # 分块读取文件，避免大文件内存问题和超时
                 with open(filepath, 'rb') as f:
-                    self.wfile.write(f.read())
+                    chunk_size = 8192
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
             else:
                 self.send_error(404, 'Subscription not found')
         else:
