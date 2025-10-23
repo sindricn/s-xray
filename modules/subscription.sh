@@ -2440,6 +2440,12 @@ regenerate_subscription() {
                 return 1
             fi
 
+            # 获取用户密码（用于 Trojan/SS）
+            local user_password=""
+            if [[ -n "$user_id" ]]; then
+                user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
+            fi
+
             # 生成 sing-box 配置
             local singbox_stderr_file=$(mktemp)
             local singbox_output=$(generate_singbox_config "$nodes_json_array" "$user_id" "$user_password" 2>"$singbox_stderr_file")
