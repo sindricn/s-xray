@@ -1831,12 +1831,23 @@ menu_script() {
                     if [[ -n "$uninstall_script" ]]; then
                         echo ""
                         print_info "即将启动卸载程序..."
-                        print_info "脚本路径: $uninstall_script"
                         echo ""
-                        sleep 1
 
-                        # 使用 exec 替换当前进程，确保stdin正确传递
-                        exec bash "$uninstall_script"
+                        # 直接调用卸载脚本，不使用exec（避免替换当前进程）
+                        if bash "$uninstall_script"; then
+                            # 卸载脚本正常完成
+                            echo ""
+                            print_info "卸载程序已退出"
+
+                            # 如果选择了完全卸载或卸载管理脚本，则退出主程序
+                            echo ""
+                            read -p "按 Enter 键退出..." -t 5
+                            exit 0
+                        else
+                            # 卸载脚本异常退出
+                            echo ""
+                            print_warning "卸载程序异常退出"
+                        fi
                     else
                         print_error "未找到卸载脚本"
                         echo ""

@@ -407,28 +407,6 @@ quick_add_vless_reality() {
     local short_id=$(openssl rand -hex 8)
     print_info "ShortId: $short_id"
 
-    # 验证关键变量
-    if [[ -z "$dest_server" ]]; then
-        print_error "dest_server 变量为空！"
-        return 1
-    fi
-    if [[ -z "$server_names" ]]; then
-        print_error "server_names 变量为空！"
-        return 1
-    fi
-    if [[ -z "$private_key" ]]; then
-        print_error "private_key 变量为空！"
-        return 1
-    fi
-    if [[ -z "$public_key" ]]; then
-        print_error "public_key 变量为空！"
-        return 1
-    fi
-    if [[ -z "$short_id" ]]; then
-        print_error "short_id 变量为空！"
-        return 1
-    fi
-
     # 构建Reality额外配置（JSON格式）
     local reality_config=$(jq -n \
         --arg dest "$dest_server:443" \
@@ -436,7 +414,14 @@ quick_add_vless_reality() {
         --arg private_key "$private_key" \
         --arg public_key "$public_key" \
         --arg short_id "$short_id" \
-        '{dest: $dest, server_names: [$sni], private_key: $private_key, public_key: $public_key, short_ids: [$short_id], flow: "xtls-rprx-vision"}')
+        '{
+            dest: $dest,
+            server_names: [$sni],
+            private_key: $private_key,
+            public_key: $public_key,
+            short_ids: [$short_id],
+            flow: "xtls-rprx-vision"
+        }')
 
     # 保存节点信息（新架构：只保存节点技术参数）
     save_node_info "vless" "$port" "tcp" "reality" "$reality_config" "$node_name"
