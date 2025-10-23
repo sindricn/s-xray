@@ -7,7 +7,9 @@
 #================================================================
 
 # API 配置
-readonly XRAY_BIN="/usr/local/xray/xray"
+if [[ -z "${XRAY_BIN:-}" ]]; then
+    XRAY_BIN="/usr/local/xray/xray"
+fi
 readonly API_ADDR="127.0.0.1:10085"
 
 #================================================================
