@@ -2819,3 +2819,194 @@ update_subscription_file() {
 generate_subscription() {
     generate_subscription_with_user
 }
+
+# 通过元数据自动更新订阅内容（复用 generate_subscription_with_user 的核心逻辑）
+# 参数: $1=订阅名称, $2=用户ID, $3=订阅类型
+update_subscription_by_metadata() {
+    local sub_name="$1"
+    local sub_user_id="$2"
+    local sub_type="$3"
+
+    if [[ -z "$sub_name" ]] || [[ -z "$sub_user_id" ]] || [[ -z "$sub_type" ]]; then
+        print_error "参数不完整: 订阅名称、用户ID和订阅类型都不能为空"
+        return 1
+    fi
+
+    # 获取用户信息
+    local user_info=$(jq -r ".users[] | select(.id == \"$sub_user_id\")" "$USERS_FILE" 2>/dev/null)
+    if [[ -z "$user_info" || "$user_info" == "null" ]]; then
+        print_error "无法找到用户信息 (ID: $sub_user_id)"
+        return 1
+    fi
+
+    local sub_user_email=$(echo "$user_info" | jq -r '.username // .email // "unknown"')
+    local sub_user_password=$(echo "$user_info" | jq -r '.password // ""')
+
+    # 获取用户绑定的节点列表
+    local user_node_ports=()
+    get_user_bound_ports "$sub_user_id"
+
+    if [[ ${#user_node_ports[@]} -eq 0 ]]; then
+        print_warning "用户 $sub_user_email 未绑定任何节点，使用所有节点"
+        # 使用所有节点
+        while IFS= read -r node; do
+            user_node_ports+=($(echo "$node" | jq -r '.port'))
+        done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+    fi
+
+    if [[ ${#user_node_ports[@]} -eq 0 ]]; then
+        print_error "没有可用的节点"
+        return 1
+    fi
+
+    # 生成订阅内容（完全复用 generate_subscription_with_user 的逻辑）
+    local sub_content=""
+    local sub_file=""
+
+    case $sub_type in
+        general)
+            # 通用订阅 - Base64编码
+            local share_links=()
+            for port in "${user_node_ports[@]}"; do
+                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                if [[ -n "$node" && "$node" != "null" ]]; then
+                    local link=$(generate_share_link_smart "$sub_user_id" "$sub_user_email" "$node")
+                    if [[ -n "$link" ]]; then
+                        share_links+=("$link")
+                    fi
+                fi
+            done
+
+            if [[ ${#share_links[@]} -eq 0 ]]; then
+                print_error "没有可用的节点配置"
+                return 1
+            fi
+
+            local raw_links=""
+            for link in "${share_links[@]}"; do
+                if [[ -n "$raw_links" ]]; then
+                    raw_links="${raw_links}\n${link}"
+                else
+                    raw_links="$link"
+                fi
+            done
+            sub_content=$(echo -e "$raw_links" | base64 -w 0 2>/dev/null || echo -e "$raw_links" | base64 | tr -d '\n')
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_base64.txt"
+            ;;
+
+        raw)
+            # 原始订阅（纯文本）
+            local share_links=()
+            for port in "${user_node_ports[@]}"; do
+                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                if [[ -n "$node" && "$node" != "null" ]]; then
+                    local link=$(generate_share_link_smart "$sub_user_id" "$sub_user_email" "$node")
+                    if [[ -n "$link" ]]; then
+                        share_links+=("$link")
+                    fi
+                fi
+            done
+
+            if [[ ${#share_links[@]} -eq 0 ]]; then
+                print_error "没有可用的节点配置"
+                return 1
+            fi
+
+            sub_content=$(printf "%s\n" "${share_links[@]}")
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_raw.txt"
+            ;;
+
+        clash)
+            # Clash订阅 - YAML格式
+            local nodes_json_array="[]"
+            for port in "${user_node_ports[@]}"; do
+                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                if [[ -n "$node" && "$node" != "null" ]]; then
+                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
+                fi
+            done
+
+            local node_count=$(echo "$nodes_json_array" | jq 'length')
+            if [[ "$node_count" -eq 0 ]]; then
+                print_error "没有找到可用的节点"
+                return 1
+            fi
+
+            local clash_stderr_file=$(mktemp)
+            local clash_output=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>"$clash_stderr_file")
+            local clash_exit_code=$?
+
+            if [[ $clash_exit_code -ne 0 ]] || [[ -z "$clash_output" ]]; then
+                print_error "Clash配置生成失败"
+                cat "$clash_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /' >&2
+                rm -f "$clash_stderr_file"
+                return 1
+            fi
+
+            sub_content="$clash_output"
+            rm -f "$clash_stderr_file"
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_clash.yaml"
+            ;;
+
+        singbox)
+            # sing-box订阅 - JSON格式
+            local nodes_json_array="[]"
+            for port in "${user_node_ports[@]}"; do
+                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
+                if [[ -n "$node" && "$node" != "null" ]]; then
+                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
+                fi
+            done
+
+            local node_count=$(echo "$nodes_json_array" | jq 'length')
+            if [[ "$node_count" -eq 0 ]]; then
+                print_error "没有找到可用的节点"
+                return 1
+            fi
+
+            local singbox_stderr_file=$(mktemp)
+            local singbox_output=$(generate_singbox_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>"$singbox_stderr_file")
+            local singbox_exit_code=$?
+
+            if [[ $singbox_exit_code -ne 0 ]] || [[ -z "$singbox_output" ]]; then
+                print_error "sing-box配置生成失败"
+                cat "$singbox_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /' >&2
+                rm -f "$singbox_stderr_file"
+                return 1
+            fi
+
+            sub_content="$singbox_output"
+            rm -f "$singbox_stderr_file"
+            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_singbox.json"
+            ;;
+
+        *)
+            print_error "未知的订阅类型: ${sub_type}"
+            return 1
+            ;;
+    esac
+
+    # 保存订阅文件
+    echo "$sub_content" > "$sub_file"
+
+    # 更新订阅信息（URL和更新时间）
+    local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
+    local server_ip=$(get_subscription_domain_hint)
+    if [[ -z "$server_ip" ]]; then
+        server_ip=$(get_public_ip)
+    fi
+    if [[ -z "$server_ip" ]]; then
+        server_ip="127.0.0.1"
+    fi
+
+    local sub_filename=$(basename "$sub_file")
+    local sub_url="http://${server_ip}:${port}/sub/${sub_filename}"
+
+    local sub_db="${DATA_DIR}/subscriptions.json"
+    jq --arg name "$sub_name" --arg url "$sub_url" --arg file "$sub_file" \
+       '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, file: $file, updated: (now|todate)})' \
+       "$sub_db" > "${sub_db}.tmp"
+    mv "${sub_db}.tmp" "$sub_db"
+
+    return 0
+}

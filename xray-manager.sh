@@ -1292,6 +1292,7 @@ menu_subscription() {
 }
 
 # 更新订阅内容菜单
+# 复用 generate_subscription_with_user 的更新逻辑
 update_subscription_content_menu() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
@@ -1317,7 +1318,8 @@ update_subscription_content_menu() {
             print_info "开始更新所有订阅内容..."
 
             local sub_db="${DATA_DIR}/subscriptions.json"
-            if [[ ! -f "$sub_db" ]]; then
+            local sub_meta="${DATA_DIR}/subscription_meta.json"
+            if [[ ! -f "$sub_db" ]] || [[ ! -f "$sub_meta" ]]; then
                 print_error "订阅数据库不存在"
                 return 1
             fi
@@ -1331,20 +1333,24 @@ update_subscription_content_menu() {
             local updated_count=0
             local failed_count=0
 
-            while IFS= read -r sub; do
-                local sub_name=$(echo "$sub" | jq -r '.name')
+            # 遍历所有订阅，通过元数据获取用户ID和类型
+            while IFS= read -r sub_meta_entry; do
+                local sub_name=$(echo "$sub_meta_entry" | jq -r '.name')
+                local user_id=$(echo "$sub_meta_entry" | jq -r '.user_id')
+                local sub_type=$(echo "$sub_meta_entry" | jq -r '.type')
 
                 echo ""
-                print_info "正在更新: $sub_name"
+                print_info "正在更新: $sub_name (类型: $sub_type)"
 
-                if regenerate_subscription "$sub_name" 2>&1 | grep -q "成功\|完成"; then
+                # 调用自动更新函数（复用 generate_subscription_with_user 逻辑）
+                if update_subscription_by_metadata "$sub_name" "$user_id" "$sub_type"; then
                     ((updated_count++))
                     print_success "✓ $sub_name"
                 else
                     ((failed_count++))
                     print_error "✗ $sub_name"
                 fi
-            done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
+            done < <(jq -c '.subscriptions[]' "$sub_meta" 2>/dev/null)
 
             echo ""
             echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -1366,17 +1372,29 @@ update_subscription_content_menu() {
                 return 1
             fi
 
-            local sub_file=$(find_subscription_file "$sub_name")
-            if [[ -z "$sub_file" ]]; then
+            # 从元数据获取订阅信息
+            local sub_meta="${DATA_DIR}/subscription_meta.json"
+            if [[ ! -f "$sub_meta" ]]; then
+                print_error "订阅元数据不存在"
+                return 1
+            fi
+
+            local sub_meta_entry=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$sub_meta" 2>/dev/null)
+            if [[ -z "$sub_meta_entry" ]]; then
                 print_error "订阅不存在: $sub_name"
                 return 1
             fi
 
+            local user_id=$(echo "$sub_meta_entry" | jq -r '.user_id')
+            local sub_type=$(echo "$sub_meta_entry" | jq -r '.type')
+
             echo ""
             print_info "正在重新生成订阅内容..."
+            print_info "订阅类型: $sub_type"
             echo ""
 
-            if regenerate_subscription "$sub_name"; then
+            # 调用自动更新函数（复用 generate_subscription_with_user 逻辑）
+            if update_subscription_by_metadata "$sub_name" "$user_id" "$sub_type"; then
                 echo ""
                 print_success "订阅内容已更新: $sub_name"
 
