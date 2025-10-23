@@ -664,7 +664,18 @@ EOF
                         sni=$(echo "$dest" | cut -d':' -f1)
                     fi
 
-                    node_config="  - name: \"${node_name}\"
+                    # 确保必需字段不为空
+                    if [[ -z "$sni" ]]; then
+                        echo "# WARNING: Skipping Reality node on port $port - missing SNI" >&2
+                        ((skipped_count++))
+                        continue
+                    fi
+
+                    # 转义节点名称中的双引号和反斜杠
+                    local safe_node_name="${node_name//\\/\\\\}"
+                    safe_node_name="${safe_node_name//\"/\\\"}"
+
+                    node_config="  - name: \"${safe_node_name}\"
     type: vless
     server: ${node_host}
     port: ${port}
@@ -684,7 +695,12 @@ EOF
                     proxy_list+=("$node_name")
                     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-                    node_config="  - name: \"${node_name}\"
+
+                    # 转义节点名称
+                    local safe_node_name="${node_name//\\/\\\\}"
+                    safe_node_name="${safe_node_name//\"/\\\"}"
+
+                    node_config="  - name: \"${safe_node_name}\"
     type: vless
     server: ${node_host}
     port: ${port}
@@ -706,7 +722,12 @@ EOF
                     proxy_list+=("$node_name")
 
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-                    node_config="  - name: \"${node_name}\"
+
+                    # 转义节点名称
+                    local safe_node_name="${node_name//\\/\\\\}"
+                    safe_node_name="${safe_node_name//\"/\\\"}"
+
+                    node_config="  - name: \"${safe_node_name}\"
     type: vless
     server: ${node_host}
     port: ${port}
@@ -740,7 +761,11 @@ EOF
                         ;;
                 esac
 
-                node_config="  - name: \"${node_name}\"
+                # 转义节点名称
+                local safe_node_name="${node_name//\\/\\\\}"
+                safe_node_name="${safe_node_name//\"/\\\"}"
+
+                node_config="  - name: \"${safe_node_name}\"
     type: vmess
     server: ${node_host}
     port: ${port}
@@ -766,7 +791,12 @@ EOF
                 proxy_list+=("$node_name")
 
                 local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
-                node_config="  - name: \"${node_name}\"
+
+                # 转义节点名称
+                local safe_node_name="${node_name//\\/\\\\}"
+                safe_node_name="${safe_node_name//\"/\\\"}"
+
+                node_config="  - name: \"${safe_node_name}\"
     type: trojan
     server: ${node_host}
     port: ${port}
@@ -798,7 +828,12 @@ EOF
                         echo "# WARNING: SS-${port} cipher not supported, using aes-256-gcm" >&2
                         ;;
                 esac
-                node_config="  - name: \"${node_name}\"
+
+                # 转义节点名称
+                local safe_node_name="${node_name//\\/\\\\}"
+                safe_node_name="${safe_node_name//\"/\\\"}"
+
+                node_config="  - name: \"${safe_node_name}\"
     type: ss
     server: ${node_host}
     port: ${port}
@@ -1857,14 +1892,56 @@ regenerate_subscription() {
                 done
             fi
 
+            # 验证是否有节点数据
+            local node_count=$(echo "$nodes_json_array" | jq 'length')
+            if [[ "$node_count" -eq 0 ]]; then
+                print_error "没有找到可用的节点"
+                echo ""
+                echo -e "${YELLOW}可能的原因：${NC}"
+                echo "  1. 用户未绑定任何节点"
+                echo "  2. 节点数据文件不存在或为空"
+                echo "  3. 节点端口匹配失败"
+                echo ""
+                return 1
+            fi
+
             # 获取用户密码（用于 Trojan/SS）
             local user_password=""
             if [[ -n "$user_id" ]]; then
                 user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
             fi
 
-            # 生成 Clash 配置
-            generate_clash_config "$nodes_json_array" "$user_id" "$user_password" > "$sub_file"
+            # 生成 Clash 配置（使用与新生成订阅相同的错误处理逻辑）
+            local clash_stderr_file=$(mktemp)
+            local clash_output=$(generate_clash_config "$nodes_json_array" "$user_id" "$user_password" 2>"$clash_stderr_file")
+            local clash_exit_code=$?
+
+            if [[ $clash_exit_code -ne 0 ]]; then
+                print_error "Clash配置生成失败"
+                echo ""
+                echo -e "${YELLOW}详细信息：${NC}"
+                cat "$clash_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /'
+                echo ""
+                rm -f "$clash_stderr_file"
+                return 1
+            fi
+
+            # 验证生成的配置是否有效
+            if [[ -z "$clash_output" ]]; then
+                print_error "Clash配置生成为空"
+                echo ""
+                echo -e "${YELLOW}详细信息：${NC}"
+                cat "$clash_stderr_file" | sed 's/^# /  /'
+                echo ""
+                rm -f "$clash_stderr_file"
+                return 1
+            fi
+
+            # 保存配置到文件
+            echo "$clash_output" > "$sub_file"
+
+            # 清理临时文件
+            rm -f "$clash_stderr_file"
             ;;
 
         "raw")
