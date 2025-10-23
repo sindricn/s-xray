@@ -1376,25 +1376,13 @@ generate_singbox_config() {
         return 1
     fi
 
-    # 添加 direct 和 block outbound
-    outbounds=$(echo "$outbounds" | jq '. += [
-        {
-            type: "direct",
-            tag: "direct"
-        },
-        {
-            type: "block",
-            tag: "block"
-        }
-    ]')
-
     # 创建 selector 代理组
     local selector_outbound=$(jq -n \
         --argjson proxy_tags "$proxy_tags" \
         '{
             type: "selector",
             tag: "🌏️主代理",
-            outbounds: ($proxy_tags + ["direct"]),
+            outbounds: ($proxy_tags + ["Direct"]),
             default: $proxy_tags[0]
         }')
 
@@ -1410,9 +1398,12 @@ generate_singbox_config() {
             tolerance: 50
         }')
 
-    # 插入代理组到 outbounds 开头
-    outbounds=$(echo "$outbounds" | jq --argjson selector "$selector_outbound" --argjson urltest "$urltest_outbound" \
-        '. = [$selector, $urltest] + .')
+    # 添加 Direct outbound
+    local direct_outbound='{"type": "direct", "tag": "Direct"}'
+
+    # 组装最终 outbounds: [selector, urltest, 节点列表, Direct]
+    outbounds=$(echo "$outbounds" | jq --argjson selector "$selector_outbound" --argjson urltest "$urltest_outbound" --argjson direct "$direct_outbound" \
+        '. = [$selector, $urltest] + . + [$direct]')
 
     # 生成完整的 sing-box 配置
     jq -n \
@@ -1429,22 +1420,19 @@ generate_singbox_config() {
                         tag: "dns-remote",
                         address: "https://223.5.5.5/dns-query",
                         strategy: "ipv4_only",
-                        detour: "direct"
+                        detour: "Direct"
                     },
                     {
                         tag: "dns-local",
                         address: "223.5.5.5",
                         strategy: "ipv4_only",
-                        detour: "direct"
-                    },
-                    {
-                        tag: "dns-block",
-                        address: "rcode://refused"
+                        detour: "Direct"
                     }
                 ],
                 rules: [
                     {
-                        outbound: ["🌏️主代理", "♾️自动选择", "direct"],
+                        outbound: ["🌏️主代理", "♾️自动选择", "Direct"],
+                        action: "route",
                         server: "dns-local"
                     }
                 ],
@@ -1475,16 +1463,14 @@ generate_singbox_config() {
             route: {
                 rules: [
                     {
-                        protocol: "dns",
-                        outbound: "dns-out"
-                    },
-                    {
                         ip_is_private: true,
-                        outbound: "direct"
+                        action: "route",
+                        outbound: "Direct"
                     },
                     {
                         domain_suffix: [".cn"],
-                        outbound: "direct"
+                        action: "route",
+                        outbound: "Direct"
                     }
                 ],
                 final: "🌏️主代理",
