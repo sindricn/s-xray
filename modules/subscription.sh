@@ -322,6 +322,14 @@ urlencode() {
     echo "${encoded}"
 }
 
+# YAML 字符串转义（处理反斜杠与双引号）
+escape_yaml_string() {
+    local input="$1"
+    input="${input//\\/\\\\}"
+    input="${input//\"/\\\"}"
+    echo "$input"
+}
+
 # Base64 编码（无换行）
 base64_encode() {
     # 支持从管道读取或从参数读取
@@ -654,6 +662,8 @@ EOF
         local extra=$(echo "$node" | jq -r '.extra')
         local node_name_raw=$(echo "$node" | jq -r '.name // "未命名"')
         local node_host=$(resolve_subscription_host "$node")
+        local node_name="${node_name_raw}-${username}"
+        local safe_node_name=$(escape_yaml_string "$node_name")
 
         # 调试信息 (只在需要时输出)
         [[ "${DEBUG_MODE:-0}" == "1" ]] && echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
@@ -664,9 +674,6 @@ EOF
             vless)
                 # VLESS Reality 支持（Clash Meta）
                 if [[ "$security" == "reality" ]]; then
-                    local node_name="${node_name_raw}-${username}"
-                    proxy_list+=("$node_name")
-
                     local dest=$(echo "$extra" | jq -r '.dest // ""')
                     local server_names=$(echo "$extra" | jq -r '.server_names[0] // ""')
                     local public_key=$(echo "$extra" | jq -r '.public_key // ""')
@@ -693,10 +700,6 @@ EOF
                         continue
                     fi
 
-                    # 转义节点名称中的双引号和反斜杠
-                    local safe_node_name="${node_name//\\/\\\\}"
-                    safe_node_name="${safe_node_name//\"/\\\"}"
-
                     node_config="  - name: \"${safe_node_name}\"
     type: vless
     server: ${node_host}
@@ -713,14 +716,8 @@ EOF
     client-fingerprint: chrome"
                 elif [[ "$security" == "tls" ]]; then
                     # VLESS TLS
-                    local node_name="${node_name_raw}-${username}"
-                    proxy_list+=("$node_name")
                     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-
-                    # 转义节点名称
-                    local safe_node_name="${node_name//\\/\\\\}"
-                    safe_node_name="${safe_node_name//\"/\\\"}"
 
                     node_config="  - name: \"${safe_node_name}\"
     type: vless
@@ -740,14 +737,7 @@ EOF
                     fi
                 else
                     # Plain VLESS (no TLS)
-                    local node_name="${node_name_raw}-${username}"
-                    proxy_list+=("$node_name")
-
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-
-                    # 转义节点名称
-                    local safe_node_name="${node_name//\\/\\\\}"
-                    safe_node_name="${safe_node_name//\"/\\\"}"
 
                     node_config="  - name: \"${safe_node_name}\"
     type: vless
@@ -764,9 +754,6 @@ EOF
                 fi
                 ;;
             vmess)
-                local node_name="${node_name_raw}-${username}"
-                proxy_list+=("$node_name")
-
                 local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
                 local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
                 local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
@@ -782,10 +769,6 @@ EOF
                         echo "# WARNING: VMess-${port} cipher not supported, using auto" >&2
                         ;;
                 esac
-
-                # 转义节点名称
-                local safe_node_name="${node_name//\\/\\\\}"
-                safe_node_name="${safe_node_name//\"/\\\"}"
 
                 node_config="  - name: \"${safe_node_name}\"
     type: vmess
@@ -806,17 +789,11 @@ EOF
                 # Trojan 必需 password，如果为空则跳过
                 if [[ -z "$user_password" ]]; then
                     echo "# WARNING: Skipping Trojan-${port} - password required but not provided" >&2
+                    ((skipped_count++))
                     continue
                 fi
 
-                local node_name="${node_name_raw}-${username}"
-                proxy_list+=("$node_name")
-
                 local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
-
-                # 转义节点名称
-                local safe_node_name="${node_name//\\/\\\\}"
-                safe_node_name="${safe_node_name//\"/\\\"}"
 
                 node_config="  - name: \"${safe_node_name}\"
     type: trojan
@@ -832,11 +809,9 @@ EOF
                 # Shadowsocks 必需 password，如果为空则跳过
                 if [[ -z "$user_password" ]]; then
                     echo "# WARNING: Skipping SS-${port} - password required but not provided" >&2
+                    ((skipped_count++))
                     continue
                 fi
-
-                local node_name="${node_name_raw}-${username}"
-                proxy_list+=("$node_name")
 
                 local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
                 # 验证 cipher 是否被 Clash 支持
@@ -851,10 +826,6 @@ EOF
                         ;;
                 esac
 
-                # 转义节点名称
-                local safe_node_name="${node_name//\\/\\\\}"
-                safe_node_name="${safe_node_name//\"/\\\"}"
-
                 node_config="  - name: \"${safe_node_name}\"
     type: ss
     server: ${node_host}
@@ -865,7 +836,10 @@ EOF
                 ;;
         esac
 
-        [[ -n "$node_config" ]] && proxy_configs+=("$node_config")
+        if [[ -n "$node_config" ]]; then
+            proxy_configs+=("$node_config")
+            proxy_list+=("$safe_node_name")
+        fi
     done < <(echo "$nodes_array" | jq -c '.[]')
 
     # 调试统计信息 (只在需要时输出)
