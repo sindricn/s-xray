@@ -1362,12 +1362,20 @@ save_node_info() {
         name="${protocol}-${port}"
     fi
 
-    # 使用 Python 脚本处理 JSON，避免 jq 的编码问题
-    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" add_node "$NODES_FILE" \
-        "$name" "$protocol" "$port" "$transport" "$security" "$extra_config"; then
-        print_error "写入节点信息失败"
-        return 1
-    fi
+    local node_data=$(jq -n \
+        --arg name "$name" \
+        --arg protocol "$protocol" \
+        --arg port "$port" \
+        --arg transport "$transport" \
+        --arg security "$security" \
+        --argjson extra "$extra_config" \
+        '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
+
+    # 读取现有数据
+    local current_data=$(cat "$NODES_FILE")
+
+    # 添加新节点
+    echo "$current_data" | jq ".nodes += [$node_data]" > "$NODES_FILE"
 }
 
 # 从数据库删除节点

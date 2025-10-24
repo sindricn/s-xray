@@ -46,8 +46,7 @@ source_modules() {
 
     local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
 
-    # 导出全局变量
-    export SCRIPT_DIR="$script_dir"
+    # 导出 MODULES_DIR 为全局变量
     export MODULES_DIR="${script_dir}/modules"
 
     if [[ ! -d "$MODULES_DIR" ]]; then
@@ -1211,11 +1210,9 @@ modify_user_info_direct() {
                 if [[ -n "$exists" ]]; then
                     print_error "用户名已存在: $new_username"
                 else
-                    # 使用 Python 脚本更新用户名
-                    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" username "$new_username"; then
-                        print_error "更新用户名失败"
-                        return 1
-                    fi
+                    # 更新用户名
+                    jq ".users |= map(if .username == \"$username\" then .username = \"$new_username\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
                     generate_xray_config
                     restart_xray
@@ -1230,10 +1227,8 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新的邮箱: " new_email
             if [[ -n "$new_email" ]]; then
-                if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" email "$new_email"; then
-                    print_error "更新邮箱失败"
-                    return 1
-                fi
+                jq ".users |= map(if .username == \"$username\" then .email = \"$new_email\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "邮箱修改成功"
                 generate_xray_config
                 restart_xray
@@ -1244,10 +1239,8 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新密码: " new_password
             if [[ -n "$new_password" ]]; then
-                if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" password "$new_password"; then
-                    print_error "更新密码失败"
-                    return 1
-                fi
+                jq ".users |= map(if .username == \"$username\" then .password = \"$new_password\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "密码修改成功"
                 generate_xray_config
                 restart_xray
@@ -1260,10 +1253,8 @@ modify_user_info_direct() {
             print_info "新 UUID: $new_uuid"
 
             # 更新用户UUID
-            if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" id "$new_uuid"; then
-                print_error "更新UUID失败"
-                return 1
-            fi
+            jq ".users |= map(if .username == \"$username\" then .id = \"$new_uuid\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
             # 同步更新绑定关系中的UUID
             if [[ -f "$NODE_USERS_FILE" ]]; then
@@ -1285,10 +1276,8 @@ modify_user_info_direct() {
             local new_enabled="true"
             [[ "$current_enabled" == "true" ]] && new_enabled="false"
 
-            if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" enabled "$new_enabled"; then
-                print_error "更新用户状态失败"
-                return 1
-            fi
+            jq ".users |= map(if .username == \"$username\" then .enabled = $new_enabled else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
             if [[ "$new_enabled" == "true" ]]; then
                 print_success "用户已启用"

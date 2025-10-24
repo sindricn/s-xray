@@ -62,12 +62,15 @@ init_admin_user() {
     local admin_password=$(openssl rand -base64 16 | tr -d '/+=' | cut -c1-16)
     local admin_email="admin@system"  # 保持邮箱格式
 
-    # 使用 Python 辅助脚本处理 JSON，避免 jq 的编码问题
-    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" add_user "$USERS_FILE" \
-        "$admin_uuid" "admin" "$admin_password" "$admin_email" 0 "unlimited" "unlimited"; then
-        print_error "添加admin用户失败"
-        return 1
-    fi
+    local admin_data=$(jq -n \
+        --arg id "$admin_uuid" \
+        --arg username "admin" \
+        --arg password "$admin_password" \
+        --arg email "$admin_email" \
+        '{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: (now|todate), enabled: true}')
+
+    jq ".users += [$admin_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "默认admin用户初始化成功"
     echo -e "${CYAN}Admin用户信息：${NC}"
@@ -213,12 +216,19 @@ add_global_user() {
         echo '{"users":[]}' > "$USERS_FILE"
     fi
 
-    # 使用 Python 脚本处理 JSON，避免 jq 的编码问题
-    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" add_user "$USERS_FILE" \
-        "$uuid" "$username" "$password" "$email" "$level" "$traffic_limit_gb" "$expire_date"; then
-        print_error "添加用户失败"
-        return 1
-    fi
+    local user_data=$(jq -n \
+        --arg id "$uuid" \
+        --arg username "$username" \
+        --arg password "$password" \
+        --arg email "$email" \
+        --argjson level "$level" \
+        --arg traffic_limit "$traffic_limit_gb" \
+        --arg traffic_used "0" \
+        --arg expire "$expire_date" \
+        '{id: $id, username: $username, password: $password, email: $email, level: $level, traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
+
+    jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "全局用户添加成功！"
     echo ""
@@ -399,10 +409,8 @@ delete_single_user() {
     fi
 
     # 3. 从全局用户列表删除
-    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" delete_user "$USERS_FILE" "$username"; then
-        print_error "删除用户失败"
-        return 1
-    fi
+    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "用户删除成功"
 
@@ -478,10 +486,8 @@ delete_global_user() {
     fi
 
     # 3. 从全局用户列表删除
-    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" delete_user "$USERS_FILE" "$username"; then
-        print_error "删除用户失败"
-        return 1
-    fi
+    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "用户删除成功"
 
