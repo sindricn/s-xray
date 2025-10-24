@@ -1183,7 +1183,11 @@ modify_user_info_direct() {
                     print_error "用户名已存在: $new_username"
                 else
                     # 更新用户名
-                    jq ".users |= map(if .username == \"$username\" then .username = \"$new_username\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                    if ! jq ".users |= map(if .username == \"$username\" then .username = \"$new_username\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                        print_error "更新用户名失败"
+                        rm -f "${USERS_FILE}.tmp"
+                        return 1
+                    fi
                     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
                     generate_xray_config
