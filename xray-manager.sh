@@ -46,7 +46,8 @@ source_modules() {
 
     local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
 
-    # 导出 MODULES_DIR 为全局变量
+    # 导出全局变量
+    export SCRIPT_DIR="$script_dir"
     export MODULES_DIR="${script_dir}/modules"
 
     if [[ ! -d "$MODULES_DIR" ]]; then
