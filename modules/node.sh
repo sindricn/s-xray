@@ -1378,14 +1378,28 @@ save_node_info() {
         name="${protocol}-${port}"
     fi
 
+    # 安全地传递 JSON：先写入临时文件，再用 --slurpfile 读取
+    local extra_tmp=$(mktemp)
+    echo "$extra_config" > "$extra_tmp"
+
+    # 验证 extra_config 是否是合法的 JSON
+    if ! jq empty "$extra_tmp" 2>/dev/null; then
+        print_error "额外配置不是合法的 JSON 格式"
+        print_error "内容: $extra_config"
+        rm -f "$extra_tmp"
+        return 1
+    fi
+
     local node_data=$(jq -n \
         --arg name "$name" \
         --arg protocol "$protocol" \
         --arg port "$port" \
         --arg transport "$transport" \
         --arg security "$security" \
-        --argjson extra "$extra_config" \
-        '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
+        --slurpfile extra_array "$extra_tmp" \
+        '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra_array[0], created: (now|todate)}')
+
+    rm -f "$extra_tmp"
 
     if [[ -z "$node_data" ]]; then
         print_error "节点信息生成失败"

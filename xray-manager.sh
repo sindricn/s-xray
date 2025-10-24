@@ -1182,8 +1182,8 @@ modify_user_info_direct() {
                 if [[ -n "$exists" ]]; then
                     print_error "用户名已存在: $new_username"
                 else
-                    # 更新用户名
-                    if ! jq ".users |= map(if .username == \"$username\" then .username = \"$new_username\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                    # 更新用户名（正确的 jq 语法：返回修改后的对象，而不是字符串）
+                    if ! jq ".users |= map(if .username == \"$username\" then . + {username: \"$new_username\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
                         print_error "更新用户名失败"
                         rm -f "${USERS_FILE}.tmp"
                         return 1
@@ -1203,7 +1203,11 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新的邮箱: " new_email
             if [[ -n "$new_email" ]]; then
-                jq ".users |= map(if .username == \"$username\" then .email = \"$new_email\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                if ! jq ".users |= map(if .username == \"$username\" then . + {email: \"$new_email\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                    print_error "更新邮箱失败"
+                    rm -f "${USERS_FILE}.tmp"
+                    return 1
+                fi
                 mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "邮箱修改成功"
                 generate_xray_config
@@ -1215,7 +1219,11 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新密码: " new_password
             if [[ -n "$new_password" ]]; then
-                jq ".users |= map(if .username == \"$username\" then .password = \"$new_password\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+                if ! jq ".users |= map(if .username == \"$username\" then . + {password: \"$new_password\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                    print_error "更新密码失败"
+                    rm -f "${USERS_FILE}.tmp"
+                    return 1
+                fi
                 mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "密码修改成功"
                 generate_xray_config
@@ -1229,13 +1237,21 @@ modify_user_info_direct() {
             print_info "新 UUID: $new_uuid"
 
             # 更新用户UUID
-            jq ".users |= map(if .username == \"$username\" then .id = \"$new_uuid\" else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
+            if ! jq ".users |= map(if .username == \"$username\" then . + {id: \"$new_uuid\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                print_error "更新UUID失败"
+                rm -f "${USERS_FILE}.tmp"
+                return 1
+            fi
             mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
             # 同步更新绑定关系中的UUID
             if [[ -f "$NODE_USERS_FILE" ]]; then
                 local old_uuid=$(echo "$user_info" | jq -r '.id')
-                jq "(.bindings[].users) |= map(if . == \"$old_uuid\" then \"$new_uuid\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                if ! jq "(.bindings[].users) |= map(if . == \"$old_uuid\" then \"$new_uuid\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                    print_error "更新绑定关系UUID失败"
+                    rm -f "${NODE_USERS_FILE}.tmp"
+                    return 1
+                fi
                 mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
             fi
 
