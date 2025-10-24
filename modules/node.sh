@@ -85,27 +85,14 @@ bind_admin_to_node() {
             return 1
         fi
 
-        # 使用临时文件安全写入
-        local binding_tmp
-        binding_tmp=$(mktemp) || {
-            print_error "无法创建临时文件"
-            return 1
-        }
-
-        printf '%s\n' "$binding_data" > "$binding_tmp" || {
-            print_error "写入绑定临时数据失败"
-            rm -f "$binding_tmp"
-            return 1
-        }
-
-        if ! jq --slurpfile new_binding "$binding_tmp" '.bindings += $new_binding' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        # 使用 --argjson 安全添加绑定（避免 shell 引号问题）
+        if ! jq --argjson binding "$binding_data" '.bindings += [$binding]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "更新绑定信息失败"
-            rm -f "$binding_tmp" "${NODE_USERS_FILE}.tmp"
+            rm -f "${NODE_USERS_FILE}.tmp"
             return 1
         fi
 
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
-        rm -f "$binding_tmp"
     fi
 
     # 返回admin用户信息（用于后续生成分享链接）
@@ -496,7 +483,7 @@ quick_add_vless_reality() {
     echo ""
 
     # 生成并显示分享链接
-    generate_vless_reality_share "$admin_uuid" "$admin_remark" "$port" "$dest_server" "$server_names" "$public_key" "$short_id"
+    generate_vless_reality_share "$admin_uuid" "$admin_remark" "$port" "$server_names" "$public_key" "$short_id"
 
     echo ""
     echo -e "${GREEN}✅ 节点创建完成并已绑定admin用户！${NC}"
@@ -1405,26 +1392,14 @@ save_node_info() {
         return 1
     fi
 
-    local node_tmp
-    node_tmp=$(mktemp) || {
-        print_error "无法创建临时文件保存节点信息"
-        return 1
-    }
-
-    printf '%s\n' "$node_data" > "$node_tmp" || {
-        print_error "写入节点临时数据失败"
-        rm -f "$node_tmp"
-        return 1
-    }
-
-    if ! jq --slurpfile new_node "$node_tmp" '.nodes += $new_node' "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+    # 使用 --argjson 安全添加节点（避免 shell 引号问题和数组嵌套）
+    if ! jq --argjson node "$node_data" '.nodes += [$node]' "$NODES_FILE" > "${NODES_FILE}.tmp"; then
         print_error "写入节点信息失败"
-        rm -f "$node_tmp"
+        rm -f "${NODES_FILE}.tmp"
         return 1
     fi
 
     mv "${NODES_FILE}.tmp" "$NODES_FILE"
-    rm -f "$node_tmp"
 }
 
 # 从数据库删除节点
