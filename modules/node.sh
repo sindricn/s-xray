@@ -1362,40 +1362,12 @@ save_node_info() {
         name="${protocol}-${port}"
     fi
 
-    # 确保 extra_config 是合法 JSON
-    if ! printf '%s' "$extra_config" | jq empty >/dev/null 2>&1; then
-        print_error "额外配置不是合法的 JSON 格式"
-        print_error "内容: $extra_config"
-        return 1
-    fi
-
-    # 使用临时文件传递 extra_config，避免 Bash 变量传递 JSON 的编码问题
-    local extra_tmp=$(mktemp)
-    echo "$extra_config" > "$extra_tmp"
-
-    local created_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-    # 直接原子操作：从文件读取 extra，避免 --argjson 的变量传递问题
-    if ! jq \
-        --arg name "$name" \
-        --arg protocol "$protocol" \
-        --arg port "$port" \
-        --arg transport "$transport" \
-        --arg security "$security" \
-        --slurpfile extra_array "$extra_tmp" \
-        --arg created "$created_time" \
-        '.nodes += [{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra_array[0], created: $created}]' \
-        "$NODES_FILE" > "${NODES_FILE}.tmp" 2>"${NODES_FILE}.err"; then
+    # 使用 Python 脚本处理 JSON，避免 jq 的编码问题
+    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" add_node "$NODES_FILE" \
+        "$name" "$protocol" "$port" "$transport" "$security" "$extra_config"; then
         print_error "写入节点信息失败"
-        if [[ -s "${NODES_FILE}.err" ]]; then
-            cat "${NODES_FILE}.err" >&2
-        fi
-        rm -f "$extra_tmp" "${NODES_FILE}.tmp" "${NODES_FILE}.err"
         return 1
     fi
-
-    mv "${NODES_FILE}.tmp" "$NODES_FILE"
-    rm -f "$extra_tmp" "${NODES_FILE}.err"
 }
 
 # 从数据库删除节点

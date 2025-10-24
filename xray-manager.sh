@@ -1210,8 +1210,8 @@ modify_user_info_direct() {
                 if [[ -n "$exists" ]]; then
                     print_error "用户名已存在: $new_username"
                 else
-                    # 更新用户名（正确的 jq 语法：返回修改后的对象，而不是字符串）
-                    if ! update_json_file ".users |= map(if .username == \"$username\" then . + {username: \"$new_username\"} else . end)" "$USERS_FILE"; then
+                    # 使用 Python 脚本更新用户名
+                    if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" username "$new_username"; then
                         print_error "更新用户名失败"
                         return 1
                     fi
@@ -1229,7 +1229,7 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新的邮箱: " new_email
             if [[ -n "$new_email" ]]; then
-                if ! update_json_file ".users |= map(if .username == \"$username\" then . + {email: \"$new_email\"} else . end)" "$USERS_FILE"; then
+                if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" email "$new_email"; then
                     print_error "更新邮箱失败"
                     return 1
                 fi
@@ -1243,7 +1243,7 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新密码: " new_password
             if [[ -n "$new_password" ]]; then
-                if ! update_json_file ".users |= map(if .username == \"$username\" then . + {password: \"$new_password\"} else . end)" "$USERS_FILE"; then
+                if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" password "$new_password"; then
                     print_error "更新密码失败"
                     return 1
                 fi
@@ -1259,7 +1259,7 @@ modify_user_info_direct() {
             print_info "新 UUID: $new_uuid"
 
             # 更新用户UUID
-            if ! update_json_file ".users |= map(if .username == \"$username\" then . + {id: \"$new_uuid\"} else . end)" "$USERS_FILE"; then
+            if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" id "$new_uuid"; then
                 print_error "更新UUID失败"
                 return 1
             fi
@@ -1284,7 +1284,7 @@ modify_user_info_direct() {
             local new_enabled="true"
             [[ "$current_enabled" == "true" ]] && new_enabled="false"
 
-            if ! update_json_file ".users |= map(if .username == \"$username\" then .enabled = $new_enabled else . end)" "$USERS_FILE"; then
+            if ! python3 "$SCRIPT_DIR/modules/json_helper.py" update_user "$USERS_FILE" "$username" enabled "$new_enabled"; then
                 print_error "更新用户状态失败"
                 return 1
             fi
