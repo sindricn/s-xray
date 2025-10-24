@@ -277,6 +277,50 @@ repair_json_file() {
     return 0
 }
 
+# 安全更新 JSON 文件（仅在 jq 成功时覆盖原文件）
+update_json_file() {
+    if [[ $# -lt 2 ]]; then
+        log_error "update_json_file 调用参数不足"
+        return 1
+    fi
+
+    local file="${!#}"         # 最后一个参数视为文件路径
+    local args=("${@:1:$#-1}") # 除最后一个参数外的所有 jq 参数
+
+    if [[ ! -f "$file" ]]; then
+        log_error "update_json_file: 目标文件不存在: $file"
+        return 1
+    fi
+
+    # 先验证原始文件格式
+    if ! jq empty "$file" >/dev/null 2>&1; then
+        log_error "JSON 文件格式错误，无法更新: $file"
+        return 1
+    fi
+
+    # 创建临时文件
+    local tmp_file
+    tmp_file=$(mktemp) || {
+        log_error "update_json_file: 无法创建临时文件"
+        return 1
+    }
+
+    if jq "${args[@]}" "$file" > "$tmp_file" 2> "${tmp_file}.err"; then
+        mv "$tmp_file" "$file"
+        rm -f "${tmp_file}.err"
+        return 0
+    fi
+
+    log_error "更新 JSON 文件失败: $file"
+    if [[ -s "${tmp_file}.err" ]]; then
+        while IFS= read -r line; do
+            log_error "jq: $line"
+        done < "${tmp_file}.err"
+    fi
+    rm -f "$tmp_file" "${tmp_file}.err"
+    return 1
+}
+
 # IP 地址验证
 validate_ip() {
     local ip=$1

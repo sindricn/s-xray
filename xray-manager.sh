@@ -537,13 +537,20 @@ delete_node_smart() {
 
     for port in "${ports_to_delete[@]}"; do
         # 删除节点
-        jq ".nodes |= map(select(.port != \"$port\"))" "$NODES_FILE" > "${NODES_FILE}.tmp"
-        mv "${NODES_FILE}.tmp" "$NODES_FILE"
+        if ! update_json_file ".nodes |= map(select(.port != \"$port\"))" "$NODES_FILE"; then
+            print_error "删除节点失败: $port"
+            ((fail_count++))
+            continue
+        fi
 
         # 删除绑定关系
         if [[ -f "$NODE_USERS_FILE" ]]; then
-            jq ".bindings |= map(select(.port != \"$port\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
-            mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+            if ! update_json_file ".bindings |= map(select(.port != \"$port\"))" "$NODE_USERS_FILE"; then
+                print_error "删除节点绑定失败: $port"
+                ((fail_count++))
+                # 尝试回滚节点文件（不易实现），继续处理其他节点
+                continue
+            fi
         fi
 
         # 从配置中移除
@@ -607,8 +614,10 @@ modify_node_config_direct() {
                 echo -e "${YELLOW}当前名称: $current_name${NC}"
                 read -p "请输入新的节点名称: " new_name
                 if [[ -n "$new_name" ]]; then
-                    jq ".nodes |= map(if .port == \"$port\" then .name = \"$new_name\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
-                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .name = \"$new_name\" else . end)" "$NODES_FILE"; then
+                        print_error "节点名称更新失败"
+                        continue
+                    fi
                     print_success "节点名称已修改为: $new_name"
                     # 重新加载节点信息
                     node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
@@ -626,13 +635,17 @@ modify_node_config_direct() {
                     fi
 
                     # 更新节点信息
-                    jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
-                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE"; then
+                        print_error "更新节点端口失败"
+                        continue
+                    fi
 
                     # 更新绑定信息
                     if [[ -f "$NODE_USERS_FILE" ]]; then
-                        jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
-                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+                        if ! update_json_file ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE"; then
+                            print_error "更新节点绑定信息失败"
+                            continue
+                        fi
                     fi
 
                     # 更新配置文件
@@ -684,8 +697,10 @@ modify_node_config_direct() {
                                 print_success "域名测试通过"
 
                                 # 更新节点extra字段
-                                jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
-                                mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                                if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE"; then
+                                    print_error "更新伪装域名失败"
+                                    continue
+                                fi
 
                                 # 重新生成配置
                                 generate_xray_config
@@ -699,8 +714,10 @@ modify_node_config_direct() {
                                 print_warning "域名测试失败，但仍可继续使用"
                                 read -p "是否仍要使用此域名? [y/N]: " confirm
                                 if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-                                    jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
-                                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE"; then
+                                        print_error "更新伪装域名失败"
+                                        continue
+                                    fi
                                     generate_xray_config
                                     restart_xray
                                     print_success "伪装域名已更新为: $new_domain"
@@ -747,8 +764,10 @@ modify_node_config_direct() {
                                 print_success "优选完成！最佳域名: $best_domain (${best_latency}ms)"
 
                                 # 更新节点
-                                jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$best_domain:443\" | .extra.server_names = [\"$best_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
-                                mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                                if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$best_domain:443\" | .extra.server_names = [\"$best_domain\"] else . end)" "$NODES_FILE"; then
+                                    print_error "更新伪装域名失败"
+                                    continue
+                                fi
 
                                 generate_xray_config
                                 restart_xray
@@ -819,8 +838,10 @@ modify_node_config_direct() {
                     echo ""
 
                     # 更新节点extra字段
-                    jq ".nodes |= map(if .port == \"$port\" then .extra.private_key = \"$private_key\" | .extra.public_key = \"$public_key\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
-                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.private_key = \"$private_key\" | .extra.public_key = \"$public_key\" else . end)" "$NODES_FILE"; then
+                        print_error "更新节点密钥失败"
+                        continue
+                    fi
 
                     # 重新生成配置
                     generate_xray_config
@@ -1060,9 +1081,10 @@ modify_user_traffic_and_expire() {
     esac
 
     # 更新用户信息
-    jq ".users |= map(if .username == \"$username\" then .traffic_limit_gb = \"$new_traffic_limit\" | .expire_date = \"$new_expire\" else . end)" \
-        "$USERS_FILE" > "${USERS_FILE}.tmp"
-    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+    if ! update_json_file ".users |= map(if .username == \"$username\" then .traffic_limit_gb = \"$new_traffic_limit\" | .expire_date = \"$new_expire\" else . end)" "$USERS_FILE"; then
+        print_error "更新用户流量/有效期失败"
+        return 1
+    fi
 
     echo ""
     print_success "流量与有效期修改成功"
@@ -1118,13 +1140,19 @@ delete_user_smart() {
 
         # 从绑定关系中移除该用户
         if [[ -f "$NODE_USERS_FILE" ]]; then
-            jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
-            mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+            if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
+                print_error "移除用户绑定失败: $username"
+                ((fail_count++))
+                continue
+            fi
         fi
 
         # 从用户文件中删除
-        jq ".users |= map(select(.username != \"$username\"))" "$USERS_FILE" > "${USERS_FILE}.tmp"
-        mv "${USERS_FILE}.tmp" "$USERS_FILE"
+        if ! update_json_file ".users |= map(select(.username != \"$username\"))" "$USERS_FILE"; then
+            print_error "删除用户数据失败: $username"
+            ((fail_count++))
+            continue
+        fi
 
         print_success "已删除用户: $username"
         ((success_count++))
@@ -1183,12 +1211,10 @@ modify_user_info_direct() {
                     print_error "用户名已存在: $new_username"
                 else
                     # 更新用户名（正确的 jq 语法：返回修改后的对象，而不是字符串）
-                    if ! jq ".users |= map(if .username == \"$username\" then . + {username: \"$new_username\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                    if ! update_json_file ".users |= map(if .username == \"$username\" then . + {username: \"$new_username\"} else . end)" "$USERS_FILE"; then
                         print_error "更新用户名失败"
-                        rm -f "${USERS_FILE}.tmp"
                         return 1
                     fi
-                    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
                     generate_xray_config
                     restart_xray
@@ -1203,12 +1229,10 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新的邮箱: " new_email
             if [[ -n "$new_email" ]]; then
-                if ! jq ".users |= map(if .username == \"$username\" then . + {email: \"$new_email\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                if ! update_json_file ".users |= map(if .username == \"$username\" then . + {email: \"$new_email\"} else . end)" "$USERS_FILE"; then
                     print_error "更新邮箱失败"
-                    rm -f "${USERS_FILE}.tmp"
                     return 1
                 fi
-                mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "邮箱修改成功"
                 generate_xray_config
                 restart_xray
@@ -1219,12 +1243,10 @@ modify_user_info_direct() {
             echo ""
             read -p "请输入新密码: " new_password
             if [[ -n "$new_password" ]]; then
-                if ! jq ".users |= map(if .username == \"$username\" then . + {password: \"$new_password\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+                if ! update_json_file ".users |= map(if .username == \"$username\" then . + {password: \"$new_password\"} else . end)" "$USERS_FILE"; then
                     print_error "更新密码失败"
-                    rm -f "${USERS_FILE}.tmp"
                     return 1
                 fi
-                mv "${USERS_FILE}.tmp" "$USERS_FILE"
                 print_success "密码修改成功"
                 generate_xray_config
                 restart_xray
@@ -1237,22 +1259,18 @@ modify_user_info_direct() {
             print_info "新 UUID: $new_uuid"
 
             # 更新用户UUID
-            if ! jq ".users |= map(if .username == \"$username\" then . + {id: \"$new_uuid\"} else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
+            if ! update_json_file ".users |= map(if .username == \"$username\" then . + {id: \"$new_uuid\"} else . end)" "$USERS_FILE"; then
                 print_error "更新UUID失败"
-                rm -f "${USERS_FILE}.tmp"
                 return 1
             fi
-            mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
             # 同步更新绑定关系中的UUID
             if [[ -f "$NODE_USERS_FILE" ]]; then
                 local old_uuid=$(echo "$user_info" | jq -r '.id')
-                if ! jq "(.bindings[].users) |= map(if . == \"$old_uuid\" then \"$new_uuid\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                if ! update_json_file "(.bindings[].users) |= map(if . == \"$old_uuid\" then \"$new_uuid\" else . end)" "$NODE_USERS_FILE"; then
                     print_error "更新绑定关系UUID失败"
-                    rm -f "${NODE_USERS_FILE}.tmp"
                     return 1
                 fi
-                mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
             fi
 
             print_success "UUID 重置成功"
@@ -1266,8 +1284,10 @@ modify_user_info_direct() {
             local new_enabled="true"
             [[ "$current_enabled" == "true" ]] && new_enabled="false"
 
-            jq ".users |= map(if .username == \"$username\" then .enabled = $new_enabled else . end)" "$USERS_FILE" > "${USERS_FILE}.tmp"
-            mv "${USERS_FILE}.tmp" "$USERS_FILE"
+            if ! update_json_file ".users |= map(if .username == \"$username\" then .enabled = $new_enabled else . end)" "$USERS_FILE"; then
+                print_error "更新用户状态失败"
+                return 1
+            fi
 
             if [[ "$new_enabled" == "true" ]]; then
                 print_success "用户已启用"
@@ -1596,10 +1616,12 @@ modify_subscription_menu() {
                             local filename=$(basename "$file")
                             local new_url="http://${server_ip}:${new_port}/sub/${filename}"
 
-                            jq --arg name "$name" --arg url "$new_url" \
-                               '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
-                               "$sub_db" > "${sub_db}.tmp"
-                            mv "${sub_db}.tmp" "$sub_db"
+                            if ! update_json_file --arg name "$name" --arg url "$new_url" \
+                                '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
+                                "$sub_db"; then
+                                print_error "更新订阅链接失败: $name"
+                                continue
+                            fi
                         fi
                     done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
                 fi

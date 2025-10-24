@@ -86,13 +86,10 @@ bind_admin_to_node() {
         fi
 
         # 使用 --argjson 安全添加绑定（避免 shell 引号问题）
-        if ! jq --argjson binding "$binding_data" '.bindings += [$binding]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! update_json_file --argjson binding "$binding_data" '.bindings += [$binding]' "$NODE_USERS_FILE"; then
             print_error "更新绑定信息失败"
-            rm -f "${NODE_USERS_FILE}.tmp"
             return 1
         fi
-
-        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
     fi
 
     # 返回admin用户信息（用于后续生成分享链接）
@@ -936,12 +933,10 @@ delete_node() {
 
     # 1. 从节点绑定关系中删除该端口
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! update_json_file ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE"; then
             print_error "清理节点绑定关系失败"
-            rm -f "${NODE_USERS_FILE}.tmp"
             return 1
         fi
-        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
@@ -1182,21 +1177,17 @@ modify_node_config() {
                 fi
 
                 # 更新节点信息
-                if ! jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+                if ! update_json_file ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE"; then
                     print_error "更新节点端口失败"
-                    rm -f "${NODES_FILE}.tmp"
                     return 1
                 fi
-                mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
                 # 更新绑定信息
                 if [[ -f "$NODE_USERS_FILE" ]]; then
-                    if ! jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                    if ! update_json_file ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE"; then
                         print_error "更新绑定端口失败"
-                        rm -f "${NODE_USERS_FILE}.tmp"
                         return 1
                     fi
-                    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                 fi
 
                 # 更新配置文件
@@ -1227,19 +1218,16 @@ modify_node_config() {
                         local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
                         if [[ -z "$binding_exists" ]]; then
                             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-                            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                            if ! update_json_file ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE"; then
                                 print_error "添加绑定失败"
-                                rm -f "${NODE_USERS_FILE}.tmp"
                                 return 1
                             fi
                         else
-                            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                            if ! update_json_file "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE"; then
                                 print_error "更新用户绑定失败"
-                                rm -f "${NODE_USERS_FILE}.tmp"
                                 return 1
                             fi
                         fi
-                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                         generate_xray_config
                         restart_xray
                         print_success "用户已绑定"
@@ -1266,12 +1254,10 @@ modify_node_config() {
                 if [[ -n "$username" ]]; then
                     local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
                     if [[ -n "$uuid" ]]; then
-                        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                        if ! update_json_file "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
                             print_error "解绑用户失败"
-                            rm -f "${NODE_USERS_FILE}.tmp"
                             return 1
                         fi
-                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                         generate_xray_config
                         restart_xray
                         print_success "用户已解绑"
@@ -1328,12 +1314,10 @@ delete_single_node() {
 
     # 清理节点绑定
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! update_json_file ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE"; then
             print_error "清理节点绑定失败"
-            rm -f "${NODE_USERS_FILE}.tmp"
             return 1
         fi
-        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
     fi
 
     restart_xray
@@ -1378,15 +1362,10 @@ save_node_info() {
         name="${protocol}-${port}"
     fi
 
-    # 安全地传递 JSON：先写入临时文件，再用 --slurpfile 读取
-    local extra_tmp=$(mktemp)
-    echo "$extra_config" > "$extra_tmp"
-
-    # 验证 extra_config 是否是合法的 JSON
-    if ! jq empty "$extra_tmp" 2>/dev/null; then
+    # 确保 extra_config 是合法 JSON
+    if ! printf '%s' "$extra_config" | jq empty >/dev/null 2>&1; then
         print_error "额外配置不是合法的 JSON 格式"
         print_error "内容: $extra_config"
-        rm -f "$extra_tmp"
         return 1
     fi
 
@@ -1396,53 +1375,46 @@ save_node_info() {
         --arg port "$port" \
         --arg transport "$transport" \
         --arg security "$security" \
-        --slurpfile extra_array "$extra_tmp" \
-        '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra_array[0], created: (now|todate)}')
-
-    rm -f "$extra_tmp"
+        --argjson extra "$extra_config" \
+        '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
 
     if [[ -z "$node_data" ]]; then
         print_error "节点信息生成失败"
         return 1
     fi
 
-    # 使用 --argjson 安全添加节点（避免 shell 引号问题和数组嵌套）
-    if ! jq --argjson node "$node_data" '.nodes += [$node]' "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+    if ! update_json_file --argjson node "$node_data" '.nodes += [$node]' "$NODES_FILE"; then
         print_error "写入节点信息失败"
-        rm -f "${NODES_FILE}.tmp"
         return 1
     fi
-
-    mv "${NODES_FILE}.tmp" "$NODES_FILE"
 }
 
 # 从数据库删除节点
 remove_node_info() {
     local port=$1
-    if ! jq ".nodes = [.nodes[] | select(.port != \"$port\")]" "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+    if ! update_json_file ".nodes = [.nodes[] | select(.port != \"$port\")]" "$NODES_FILE"; then
         print_error "删除节点信息失败"
-        rm -f "${NODES_FILE}.tmp"
         return 1
     fi
-    mv "${NODES_FILE}.tmp" "$NODES_FILE"
 }
 
 # 添加入站到配置文件
 add_inbound_to_config() {
     local inbound=$1
 
-    # 读取当前配置
-    local current_config=$(cat "$XRAY_CONFIG")
-
-    # 添加新的入站
-    echo "$current_config" | jq ".inbounds += [$inbound]" > "$XRAY_CONFIG"
+    if ! update_json_file --argjson inbound "$inbound" '.inbounds += [$inbound]' "$XRAY_CONFIG"; then
+        print_error "添加入站信息失败"
+        return 1
+    fi
 }
 
 # 从配置文件删除入站
 remove_inbound_from_config() {
     local port=$1
-    jq ".inbounds = [.inbounds[] | select(.port != $port)]" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
-    mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+    if ! update_json_file ".inbounds = [.inbounds[] | select(.port != $port)]" "$XRAY_CONFIG"; then
+        print_error "移除入站信息失败"
+        return 1
+    fi
 }
 
 #================================================================
