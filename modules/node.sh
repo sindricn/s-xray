@@ -1369,24 +1369,33 @@ save_node_info() {
         return 1
     fi
 
-    local node_data=$(jq -n \
+    # 使用临时文件传递 extra_config，避免 Bash 变量传递 JSON 的编码问题
+    local extra_tmp=$(mktemp)
+    echo "$extra_config" > "$extra_tmp"
+
+    local created_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # 直接原子操作：从文件读取 extra，避免 --argjson 的变量传递问题
+    if ! jq \
         --arg name "$name" \
         --arg protocol "$protocol" \
         --arg port "$port" \
         --arg transport "$transport" \
         --arg security "$security" \
-        --argjson extra "$extra_config" \
-        '{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra, created: (now|todate)}')
-
-    if [[ -z "$node_data" ]]; then
-        print_error "节点信息生成失败"
-        return 1
-    fi
-
-    if ! update_json_file --argjson node "$node_data" '.nodes += [$node]' "$NODES_FILE"; then
+        --slurpfile extra_array "$extra_tmp" \
+        --arg created "$created_time" \
+        '.nodes += [{name: $name, protocol: $protocol, port: $port, transport: $transport, security: $security, extra: $extra_array[0], created: $created}]' \
+        "$NODES_FILE" > "${NODES_FILE}.tmp" 2>"${NODES_FILE}.err"; then
         print_error "写入节点信息失败"
+        if [[ -s "${NODES_FILE}.err" ]]; then
+            cat "${NODES_FILE}.err" >&2
+        fi
+        rm -f "$extra_tmp" "${NODES_FILE}.tmp" "${NODES_FILE}.err"
         return 1
     fi
+
+    mv "${NODES_FILE}.tmp" "$NODES_FILE"
+    rm -f "$extra_tmp" "${NODES_FILE}.err"
 }
 
 # 从数据库删除节点

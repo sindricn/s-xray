@@ -62,14 +62,17 @@ init_admin_user() {
     local admin_password=$(openssl rand -base64 16 | tr -d '/+=' | cut -c1-16)
     local admin_email="admin@system"  # 保持邮箱格式
 
-    local admin_data=$(jq -n \
+    # 使用 jq 直接原子操作，避免中间变量传递
+    local created_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    if ! update_json_file \
         --arg id "$admin_uuid" \
         --arg username "admin" \
         --arg password "$admin_password" \
         --arg email "$admin_email" \
-        '{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: (now|todate), enabled: true}')
-
-    if ! update_json_file ".users += [$admin_data]" "$USERS_FILE"; then
+        --arg created "$created_time" \
+        '.users += [{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: $created, enabled: true}]' \
+        "$USERS_FILE"; then
         print_error "添加admin用户失败"
         return 1
     fi
@@ -218,7 +221,10 @@ add_global_user() {
         echo '{"users":[]}' > "$USERS_FILE"
     fi
 
-    local user_data=$(jq -n \
+    # 使用 jq 直接原子操作，避免中间变量传递
+    local created_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    if ! update_json_file \
         --arg id "$uuid" \
         --arg username "$username" \
         --arg password "$password" \
@@ -227,9 +233,9 @@ add_global_user() {
         --arg traffic_limit "$traffic_limit_gb" \
         --arg traffic_used "0" \
         --arg expire "$expire_date" \
-        '{id: $id, username: $username, password: $password, email: $email, level: $level, traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
-
-    if ! update_json_file ".users += [$user_data]" "$USERS_FILE"; then
+        --arg created "$created_time" \
+        '.users += [{id: $id, username: $username, password: $password, email: $email, level: $level, traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: $created, enabled: true}]' \
+        "$USERS_FILE"; then
         print_error "添加用户失败"
         return 1
     fi
