@@ -43,6 +43,17 @@ bind_admin_to_node() {
     local port=$1
     local protocol=$2
 
+    # 验证并修复必要的 JSON 文件
+    if ! validate_json_file "$USERS_FILE"; then
+        print_warning "用户文件格式错误，尝试修复..."
+        repair_json_file "$USERS_FILE" '{"users":[]}'
+    fi
+
+    if ! validate_json_file "$NODE_USERS_FILE"; then
+        print_warning "节点绑定文件格式错误，尝试修复..."
+        repair_json_file "$NODE_USERS_FILE" '{"bindings":[]}'
+    fi
+
     # 获取admin用户信息
     local admin_user=$(jq -r '.users[] | select(.username == "admin")' "$USERS_FILE" 2>/dev/null)
     if [[ -z "$admin_user" || "$admin_user" == "null" ]]; then
@@ -68,8 +79,33 @@ bind_admin_to_node() {
             --arg protocol "$protocol" \
             --arg user "$admin_uuid" \
             '{port: $port, protocol: $protocol, users: [$user]}')
-        jq ".bindings += [$binding_data]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+
+        if [[ -z "$binding_data" ]]; then
+            print_error "绑定数据生成失败"
+            return 1
+        fi
+
+        # 使用临时文件安全写入
+        local binding_tmp
+        binding_tmp=$(mktemp) || {
+            print_error "无法创建临时文件"
+            return 1
+        }
+
+        printf '%s\n' "$binding_data" > "$binding_tmp" || {
+            print_error "写入绑定临时数据失败"
+            rm -f "$binding_tmp"
+            return 1
+        }
+
+        if ! jq --slurpfile new_binding "$binding_tmp" '.bindings += $new_binding' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "更新绑定信息失败"
+            rm -f "$binding_tmp" "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
+
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
+        rm -f "$binding_tmp"
     fi
 
     # 返回admin用户信息（用于后续生成分享链接）
@@ -913,7 +949,11 @@ delete_node() {
 
     # 1. 从节点绑定关系中删除该端口
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "清理节点绑定关系失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
@@ -1155,12 +1195,20 @@ modify_node_config() {
                 fi
 
                 # 更新节点信息
-                jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                if ! jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+                    print_error "更新节点端口失败"
+                    rm -f "${NODES_FILE}.tmp"
+                    return 1
+                fi
                 mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
                 # 更新绑定信息
                 if [[ -f "$NODE_USERS_FILE" ]]; then
-                    jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                    if ! jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                        print_error "更新绑定端口失败"
+                        rm -f "${NODE_USERS_FILE}.tmp"
+                        return 1
+                    fi
                     mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                 fi
 
@@ -1192,9 +1240,17 @@ modify_node_config() {
                         local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
                         if [[ -z "$binding_exists" ]]; then
                             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-                            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                                print_error "添加绑定失败"
+                                rm -f "${NODE_USERS_FILE}.tmp"
+                                return 1
+                            fi
                         else
-                            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                                print_error "更新用户绑定失败"
+                                rm -f "${NODE_USERS_FILE}.tmp"
+                                return 1
+                            fi
                         fi
                         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                         generate_xray_config
@@ -1223,7 +1279,11 @@ modify_node_config() {
                 if [[ -n "$username" ]]; then
                     local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
                     if [[ -n "$uuid" ]]; then
-                        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                            print_error "解绑用户失败"
+                            rm -f "${NODE_USERS_FILE}.tmp"
+                            return 1
+                        fi
                         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                         generate_xray_config
                         restart_xray
@@ -1281,7 +1341,11 @@ delete_single_node() {
 
     # 清理节点绑定
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "清理节点绑定失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
     fi
 
@@ -1315,6 +1379,12 @@ save_node_info() {
     local security=$4      # reality/tls/none
     local extra_config=$5  # JSON格式的额外配置（Reality参数等）
     local name=$6          # 节点名称（可选，如果为空则自动生成）
+
+    # 验证并修复节点文件
+    if ! validate_json_file "$NODES_FILE"; then
+        print_warning "节点文件格式错误，尝试修复..."
+        repair_json_file "$NODES_FILE" '{"nodes":[]}'
+    fi
 
     # 如果没有提供name，自动生成
     if [[ -z "$name" ]]; then
@@ -1360,7 +1430,11 @@ save_node_info() {
 # 从数据库删除节点
 remove_node_info() {
     local port=$1
-    jq ".nodes = [.nodes[] | select(.port != \"$port\")]" "$NODES_FILE" > "${NODES_FILE}.tmp"
+    if ! jq ".nodes = [.nodes[] | select(.port != \"$port\")]" "$NODES_FILE" > "${NODES_FILE}.tmp"; then
+        print_error "删除节点信息失败"
+        rm -f "${NODES_FILE}.tmp"
+        return 1
+    fi
     mv "${NODES_FILE}.tmp" "$NODES_FILE"
 }
 

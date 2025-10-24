@@ -229,6 +229,54 @@ ensure_json_file() {
     error_exit "无法初始化数据文件: $target_file"
 }
 
+# 验证 JSON 文件格式是否正确
+validate_json_file() {
+    local file=$1
+
+    # 文件不存在
+    if [[ ! -f "$file" ]]; then
+        log_error "JSON 文件不存在: $file"
+        return 1
+    fi
+
+    # 使用 jq 验证 JSON 格式
+    if ! jq empty "$file" >/dev/null 2>&1; then
+        log_error "JSON 文件格式错误: $file"
+        return 1
+    fi
+
+    return 0
+}
+
+# 安全修复损坏的 JSON 文件（备份后重新初始化）
+repair_json_file() {
+    local file=$1
+    local default_content="${2:-{}}"
+
+    if [[ ! -f "$file" ]]; then
+        log_warn "文件不存在，将创建新文件: $file"
+        printf '%s\n' "$default_content" > "$file"
+        return 0
+    fi
+
+    # 验证文件是否损坏
+    if jq empty "$file" >/dev/null 2>&1; then
+        log_info "JSON 文件格式正确: $file"
+        return 0
+    fi
+
+    # 备份损坏的文件
+    local backup_file="${file}.broken.$(date +%Y%m%d_%H%M%S)"
+    cp "$file" "$backup_file" 2>/dev/null || true
+    log_warn "JSON 文件已损坏，已备份到: $backup_file"
+
+    # 重新初始化
+    printf '%s\n' "$default_content" > "$file"
+    log_info "已重新初始化 JSON 文件: $file"
+
+    return 0
+}
+
 # IP 地址验证
 validate_ip() {
     local ip=$1
