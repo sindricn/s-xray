@@ -119,11 +119,19 @@ save_subscription_metadata() {
 
     if [[ -n "$existing" ]]; then
         # 更新现有元数据
-        jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {type: \"$sub_type\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
-            "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+        if ! jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {type: \"$sub_type\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
+            "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"; then
+            print_error "更新订阅元数据失败"
+            rm -f "${SUBSCRIPTION_META_FILE}.tmp"
+            return 1
+        fi
     else
         # 添加新元数据
-        jq ".subscriptions += [$metadata]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+        if ! jq ".subscriptions += [$metadata]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"; then
+            print_error "添加订阅元数据失败"
+            rm -f "${SUBSCRIPTION_META_FILE}.tmp"
+            return 1
+        fi
     fi
 
     mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
@@ -156,7 +164,11 @@ delete_subscription_metadata() {
     fi
 
     # 使用--arg传递参数，避免特殊字符问题
-    jq --arg name "$sub_name" '.subscriptions |= map(select(.name != $name))' "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp" && \
+    if ! jq --arg name "$sub_name" '.subscriptions |= map(select(.name != $name))' "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"; then
+        print_error "删除订阅元数据失败"
+        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
+        return 1
+    fi
     mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
 }
 
@@ -2752,9 +2764,13 @@ save_subscription_info() {
 
     if [[ -n "$exists" ]]; then
         # 更新现有订阅
-        jq --arg name "$name" --arg url "$url" --arg file "$file" --arg type "$type" --arg user "$user" \
+        if ! jq --arg name "$name" --arg url "$url" --arg file "$file" --arg type "$type" --arg user "$user" \
            '.subscriptions = [.subscriptions[] | if .name == $name then {name: $name, url: $url, file: $file, type: $type, user: $user, updated: now|todate} else . end]' \
-           "$sub_db" > "${sub_db}.tmp"
+           "$sub_db" > "${sub_db}.tmp"; then
+            print_error "更新订阅信息失败"
+            rm -f "${sub_db}.tmp"
+            return 1
+        fi
     else
         # 添加新订阅
         local sub_data=$(jq -n \
@@ -2765,7 +2781,11 @@ save_subscription_info() {
             --arg user "$user" \
             '{name: $name, url: $url, file: $file, type: $type, user: $user, created: now|todate}')
 
-        jq ".subscriptions += [$sub_data]" "$sub_db" > "${sub_db}.tmp"
+        if ! jq ".subscriptions += [$sub_data]" "$sub_db" > "${sub_db}.tmp"; then
+            print_error "添加订阅信息失败"
+            rm -f "${sub_db}.tmp"
+            return 1
+        fi
     fi
 
     mv "${sub_db}.tmp" "$sub_db"
@@ -2781,7 +2801,11 @@ remove_subscription_info() {
     fi
 
     # 使用--arg传递参数，避免特殊字符问题
-    jq --arg name "$name" '.subscriptions = [.subscriptions[] | select(.name != $name)]' "$sub_db" > "${sub_db}.tmp" && \
+    if ! jq --arg name "$name" '.subscriptions = [.subscriptions[] | select(.name != $name)]' "$sub_db" > "${sub_db}.tmp"; then
+        print_error "删除订阅信息失败"
+        rm -f "${sub_db}.tmp"
+        return 1
+    fi
     mv "${sub_db}.tmp" "$sub_db"
 }
 
@@ -2796,7 +2820,11 @@ update_subscription_name() {
     fi
 
     # 更新订阅名称,保留其他信息
-    jq ".subscriptions = [.subscriptions[] | if .name == \"$old_name\" then .name = \"$new_name\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"
+    if ! jq ".subscriptions = [.subscriptions[] | if .name == \"$old_name\" then .name = \"$new_name\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"; then
+        print_error "更新订阅名称失败"
+        rm -f "${sub_db}.tmp"
+        return 1
+    fi
     mv "${sub_db}.tmp" "$sub_db"
 }
 
@@ -2811,7 +2839,11 @@ update_subscription_file() {
     fi
 
     # 更新文件路径
-    jq ".subscriptions = [.subscriptions[] | if .name == \"$name\" then .file = \"$new_file\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"
+    if ! jq ".subscriptions = [.subscriptions[] | if .name == \"$name\" then .file = \"$new_file\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"; then
+        print_error "更新订阅文件路径失败"
+        rm -f "${sub_db}.tmp"
+        return 1
+    fi
     mv "${sub_db}.tmp" "$sub_db"
 }
 
