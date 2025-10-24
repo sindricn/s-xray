@@ -4,7 +4,10 @@
 # Xray-Core 一键卸载脚本
 #================================================================
 
-set -e
+# 不使用 set -e，改用显式错误处理
+# set -e 会导致交互式输入失败时立即退出
+# set -u 在某些条件判断中可能导致问题，暂不启用
+set -o pipefail
 
 # 颜色定义
 RED='\033[0;31m'
@@ -179,7 +182,15 @@ detect_system
 # 确保stdin可用
 if [[ ! -t 0 ]]; then
     print_warning "检测到stdin不可用，尝试重新打开..."
-    exec < /dev/tty
+    if [[ -e /dev/tty ]]; then
+        exec < /dev/tty || {
+            print_error "无法重新打开 /dev/tty，请在交互式终端中运行此脚本"
+            exit 1
+        }
+    else
+        print_error "/dev/tty 不可用，请在交互式终端中运行此脚本"
+        exit 1
+    fi
 fi
 
 clear
@@ -221,7 +232,10 @@ echo ""
 echo -e "${CYAN}0.${NC} 取消卸载"
 echo ""
 
-read -r -p "请选择 [0-3]: " uninstall_level
+read -r -p "请选择 [0-3]: " uninstall_level || {
+    print_error "读取输入失败"
+    exit 1
+}
 
 case $uninstall_level in
     0)
@@ -247,7 +261,11 @@ case $uninstall_level in
 esac
 
 echo ""
-read -p "确定要继续吗? [y/N]: " confirm
+read -p "确定要继续吗? [y/N]: " confirm || {
+    echo ""
+    print_info "卸载已取消"
+    exit 0
+}
 
 if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
     print_info "卸载已取消"
@@ -275,7 +293,7 @@ if [[ "$UNINSTALL_LEVEL" == "xray_only" || "$UNINSTALL_LEVEL" == "full" ]]; then
     echo ""
     print_warning "是否额外清理防火墙规则?"
     echo -e "  ${YELLOW}提示：${NC}将移除脚本曾开放的端口，请谨慎操作"
-    read -p "清理防火墙规则? [y/N]: " clean_firewall
+    read -p "清理防火墙规则? [y/N]: " clean_firewall || clean_firewall="n"
 
     if [[ "$clean_firewall" == "y" || "$clean_firewall" == "Y" ]]; then
         print_info "检查常见防火墙工具..."
