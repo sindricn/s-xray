@@ -38,6 +38,16 @@ add_summary() {
     SUMMARY+=("$message")
 }
 
+get_installed_deps() {
+    local installed=()
+    for dep in "${DEPS[@]}"; do
+        if command -v "$dep" >/dev/null 2>&1; then
+            installed+=("$dep")
+        fi
+    done
+    printf '%s\n' "${installed[@]}"
+}
+
 detect_system() {
     if [[ -f /etc/os-release ]]; then
         # shellcheck disable=SC1091
@@ -128,11 +138,15 @@ remove_xray_runtime() {
 
 remove_dependencies() {
     local remove_list=()
-    for dep in "${DEPS[@]}"; do
-        if command -v "$dep" >/dev/null 2>&1; then
-            remove_list+=("$dep")
-        fi
-    done
+    if [[ $# -gt 0 ]]; then
+        remove_list=("$@")
+    else
+        for dep in "${DEPS[@]}"; do
+            if command -v "$dep" >/dev/null 2>&1; then
+                remove_list+=("$dep")
+            fi
+        done
+    fi
 
     if [[ ${#remove_list[@]} -eq 0 ]]; then
         print_info "未检测到需要卸载的依赖包"
@@ -285,7 +299,23 @@ case "$UNINSTALL_LEVEL" in
     full)
         remove_xray_runtime
         remove_scripts
-        remove_dependencies
+        mapfile -t installed_deps < <(get_installed_deps)
+        if [[ ${#installed_deps[@]} -gt 0 ]]; then
+            echo ""
+            print_warning "以下依赖可能由脚本安装，但其中部分也常为系统默认组件："
+            for dep in "${installed_deps[@]}"; do
+                echo -e "  - ${YELLOW}$dep${NC}"
+            done
+            print_info "如不确定影响，建议选择保留。"
+            read -p "是否卸载上述依赖？[y/N]: " remove_dep_choice
+            if [[ "$remove_dep_choice" == "y" || "$remove_dep_choice" == "Y" ]]; then
+                remove_dependencies "${installed_deps[@]}"
+            else
+                add_summary "依赖包已保留 (${installed_deps[*]})"
+            fi
+        else
+            print_info "未检测到需卸载的依赖包"
+        fi
         ;;
 esac
 
