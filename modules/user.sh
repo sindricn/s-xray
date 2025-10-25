@@ -69,6 +69,12 @@ init_admin_user() {
         --arg email "$admin_email" \
         '{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: (now|todate), enabled: true}')
 
+    # 验证生成的JSON是否有效
+    if [[ -z "$admin_data" ]] || ! echo "$admin_data" | jq empty >/dev/null 2>&1; then
+        print_error "生成admin用户数据失败：数据格式错误"
+        return 1
+    fi
+
     # 使用安全JSON更新，防止文件损坏
     if ! safe_json_update '.users += [$admin_data]' "$USERS_FILE" --argjson admin_data "$admin_data"; then
         print_error "初始化admin用户失败：JSON操作错误"
@@ -229,6 +235,13 @@ add_global_user() {
         --arg traffic_used "0" \
         --arg expire "$expire_date" \
         '{id: $id, username: $username, password: $password, email: $email, level: $level, traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
+
+    # 验证生成的JSON是否有效
+    if [[ -z "$user_data" ]] || ! echo "$user_data" | jq empty >/dev/null 2>&1; then
+        print_error "生成用户数据失败：数据格式错误"
+        echo "调试信息: uuid=$uuid, username=$username, email=$email"
+        return 1
+    fi
 
     # 使用安全JSON更新，防止文件损坏
     if ! safe_json_update '.users += [$user_data]' "$USERS_FILE" --argjson user_data "$user_data"; then
@@ -663,6 +676,13 @@ save_user_info() {
         --arg id "$id" \
         --arg email "$email" \
         '{port: $port, protocol: $protocol, id: $id, email: $email, created: now|todate}')
+
+    # 验证生成的JSON是否有效
+    if [[ -z "$user_data" ]] || ! echo "$user_data" | jq empty >/dev/null 2>&1; then
+        print_error "生成用户数据失败：数据格式错误"
+        echo "调试信息: port=$port, protocol=$protocol, id=$id, email=$email"
+        return 1
+    fi
 
     # 使用安全JSON更新，防止文件损坏
     if ! safe_json_update '.users += [$user_data]' "$USERS_FILE" --argjson user_data "$user_data"; then
