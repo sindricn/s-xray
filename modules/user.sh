@@ -69,17 +69,8 @@ init_admin_user() {
         --arg email "$admin_email" \
         '{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: (now|todate), enabled: true}')
 
-    # 验证生成的JSON是否有效
-    if [[ $? -ne 0 ]] || [[ -z "$admin_data" ]]; then
-        print_error "生成admin用户数据失败"
-        return 1
-    fi
-
-    # 使用安全JSON更新，防止文件损坏
-    if ! safe_json_update '.users += [$admin_data]' "$USERS_FILE" --argjson admin_data "$admin_data"; then
-        print_error "初始化admin用户失败：JSON操作错误"
-        return 1
-    fi
+    jq ".users += [$admin_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "默认admin用户初始化成功"
     echo -e "${CYAN}Admin用户信息：${NC}"
@@ -237,17 +228,8 @@ add_global_user() {
         --arg expire "$expire_date" \
         '{id: $id, username: $username, password: $password, email: $email, level: ($level|tonumber), traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
 
-    # 验证生成的JSON是否有效
-    if [[ $? -ne 0 ]] || [[ -z "$user_data" ]]; then
-        print_error "生成用户数据失败"
-        return 1
-    fi
-
-    # 使用安全JSON更新，防止文件损坏
-    if ! safe_json_update '.users += [$user_data]' "$USERS_FILE" --argjson user_data "$user_data"; then
-        print_error "添加用户失败：JSON操作错误"
-        return 1
-    fi
+    jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "全局用户添加成功！"
     echo ""
@@ -409,29 +391,27 @@ delete_single_user() {
                 print_info "已删除订阅: $sub_name"
             done <<< "$sub_names"
 
-            # 从元数据中删除 - 使用安全JSON更新
-            if ! safe_json_update ".subscriptions = [.subscriptions[] | select(.user_id != \$uuid)]" "$SUBSCRIPTION_META_FILE" --arg uuid "$uuid"; then
-                print_warning "清理订阅元数据失败，但继续删除用户"
-            else
-                print_info "已清理订阅元数据"
+            # 从元数据中删除
+            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
+                print_error "清理订阅元数据失败"
+                return 1
             fi
+            print_info "已清理订阅元数据"
         fi
     fi
 
-    # 2. 从所有节点解绑 - 使用安全JSON更新
+    # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! safe_json_update "(.bindings[].users) |= map(select(. != \$uuid))" "$NODE_USERS_FILE" --arg uuid "$uuid"; then
-            print_warning "清理节点绑定关系失败，但继续删除用户"
-        else
-            print_info "已清理节点绑定关系"
+        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
+            print_error "清理节点绑定关系失败"
+            return 1
         fi
+        print_info "已清理节点绑定关系"
     fi
 
-    # 3. 从全局用户列表删除 - 使用安全JSON更新
-    if ! safe_json_update ".users = [.users[] | select(.id != \$uuid)]" "$USERS_FILE" --arg uuid "$uuid"; then
-        print_error "删除用户失败"
-        return 1
-    fi
+    # 3. 从全局用户列表删除
+    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "用户删除成功"
 
@@ -486,34 +466,26 @@ delete_global_user() {
                 print_info "已删除订阅文件: $sub_name"
             done <<< "$sub_names"
 
-            print_info "正在清理订阅元数据..."
-            if ! safe_json_update ".subscriptions = [.subscriptions[] | select(.user_id != \$uuid)]" "$SUBSCRIPTION_META_FILE" --arg uuid "$uuid"; then
-                local exit_code=$?
-                print_warning "清理订阅元数据失败，退出码: $exit_code。继续删除..."
-            else
-                print_info "订阅元数据清理完毕."
+            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
+                print_error "清理订阅元数据失败"
+                return 1
             fi
+            print_info "已清理订阅元数据"
         fi
     fi
 
     # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        print_info "正在清理节点绑定关系..."
-        if ! safe_json_update "(.bindings[].users) |= map(select(. != \$uuid))" "$NODE_USERS_FILE" --arg uuid "$uuid"; then
-            local exit_code=$?
-            print_warning "清理节点绑定关系失败，退出码: $exit_code。继续删除..."
-        else
-            print_info "节点绑定关系清理完毕."
+        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
+            print_error "清理节点绑定关系失败"
+            return 1
         fi
+        print_info "已清理节点绑定关系"
     fi
 
     # 3. 从全局用户列表删除
-    print_info "正在从全局用户列表删除..."
-    if ! safe_json_update ".users = [.users[] | select(.id != \$uuid)]" "$USERS_FILE" --arg uuid "$uuid"; then
-        local exit_code=$?
-        print_error "从全局用户列表删除失败，退出码: $exit_code。"
-        return 1
-    fi
+    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "用户删除成功"
 
@@ -677,17 +649,8 @@ save_user_info() {
         --arg email "$email" \
         '{port: $port, protocol: $protocol, id: $id, email: $email, created: now|todate}')
 
-    # 验证生成的JSON是否有效
-    if [[ $? -ne 0 ]] || [[ -z "$user_data" ]]; then
-        print_error "生成用户数据失败"
-        return 1
-    fi
-
-    # 使用安全JSON更新，防止文件损坏
-    if ! safe_json_update '.users += [$user_data]' "$USERS_FILE" --argjson user_data "$user_data"; then
-        print_error "保存用户信息失败：JSON操作错误"
-        return 1
-    fi
+    jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 }
 
 
