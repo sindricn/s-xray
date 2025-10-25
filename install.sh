@@ -78,18 +78,29 @@ print_info "安装必要依赖..."
 
 case $OS in
     ubuntu|debian)
-        print_info "更新软件包列表..."
-        apt-get update -qq 2>&1 | grep -E "^(Get:|Fetched|Reading)" || true
-
         DEPS="curl wget unzip jq python3 git"
+        missing_deps=()
+
         for dep in $DEPS; do
-            if ! command -v $dep >/dev/null 2>&1; then
-                print_info "正在安装: $dep"
-                apt-get install -y $dep 2>&1 | grep -E "^(Setting up|Unpacking)" || true
-            else
+            if command -v "$dep" >/dev/null 2>&1; then
                 print_info "已安装: $dep ✓"
+            else
+                print_warning "未检测到: $dep"
+                missing_deps+=("$dep")
             fi
         done
+
+        if [[ ${#missing_deps[@]} -gt 0 ]]; then
+            print_info "检测到缺失依赖，更新软件包列表..."
+            apt-get update -qq 2>&1 | grep -E "^(Get:|Fetched|Reading)" || true
+
+            for dep in "${missing_deps[@]}"; do
+                print_info "正在安装: $dep"
+                apt-get install -y "$dep" 2>&1 | grep -E "^(Setting up|Unpacking)" || true
+            done
+        else
+            print_success "所有依赖已安装，无需更新软件包列表"
+        fi
         ;;
     centos|rhel|fedora)
         DEPS="curl wget unzip jq python3 git"

@@ -200,6 +200,127 @@ confirm() {
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
+# 确保 JSON 数据文件存在
+ensure_json_file() {
+    local target_file="$1"
+    local default_payload="${2:-{}}"
+
+    # 已存在则直接返回
+    if [[ -f "$target_file" ]]; then
+        return 0
+    fi
+
+    local target_dir
+    target_dir="$(dirname "$target_file")"
+
+    # 确保所在目录存在
+    if [[ ! -d "$target_dir" ]]; then
+        if ! mkdir -p "$target_dir" 2>/dev/null; then
+            error_exit "无法创建数据目录: $target_dir"
+        fi
+    fi
+
+    # 写入默认内容
+    if printf '%s\n' "$default_payload" > "$target_file"; then
+        log_debug "已初始化数据文件: $target_file"
+        return 0
+    fi
+
+    error_exit "无法初始化数据文件: $target_file"
+}
+
+# 验证 JSON 文件格式是否正确
+validate_json_file() {
+    local file=$1
+
+    # 文件不存在
+    if [[ ! -f "$file" ]]; then
+        log_error "JSON 文件不存在: $file"
+        return 1
+    fi
+
+    # 使用 jq 验证 JSON 格式
+    if ! jq empty "$file" >/dev/null 2>&1; then
+        log_error "JSON 文件格式错误: $file"
+        return 1
+    fi
+
+    return 0
+}
+
+# 安全修复损坏的 JSON 文件（备份后重新初始化）
+repair_json_file() {
+    local file=$1
+    local default_content="${2:-{}}"
+
+    if [[ ! -f "$file" ]]; then
+        log_warn "文件不存在，将创建新文件: $file"
+        printf '%s\n' "$default_content" > "$file"
+        return 0
+    fi
+
+    # 验证文件是否损坏
+    if jq empty "$file" >/dev/null 2>&1; then
+        log_info "JSON 文件格式正确: $file"
+        return 0
+    fi
+
+    # 备份损坏的文件
+    local backup_file="${file}.broken.$(date +%Y%m%d_%H%M%S)"
+    cp "$file" "$backup_file" 2>/dev/null || true
+    log_warn "JSON 文件已损坏，已备份到: $backup_file"
+
+    # 重新初始化
+    printf '%s\n' "$default_content" > "$file"
+    log_info "已重新初始化 JSON 文件: $file"
+
+    return 0
+}
+
+# 安全更新 JSON 文件（仅在 jq 成功时覆盖原文件）
+update_json_file() {
+    if [[ $# -lt 2 ]]; then
+        log_error "update_json_file 调用参数不足"
+        return 1
+    fi
+
+    local file="${!#}"         # 最后一个参数视为文件路径
+    local args=("${@:1:$#-1}") # 除最后一个参数外的所有 jq 参数
+
+    if [[ ! -f "$file" ]]; then
+        log_error "update_json_file: 目标文件不存在: $file"
+        return 1
+    fi
+
+    # 先验证原始文件格式
+    if ! jq empty "$file" >/dev/null 2>&1; then
+        log_error "JSON 文件格式错误，无法更新: $file"
+        return 1
+    fi
+
+    # 创建临时文件
+    local tmp_file
+    tmp_file=$(mktemp) || {
+        log_error "update_json_file: 无法创建临时文件"
+        return 1
+    }
+
+    if jq "${args[@]}" "$file" > "$tmp_file" 2> "${tmp_file}.err"; then
+        mv "$tmp_file" "$file"
+        rm -f "${tmp_file}.err"
+        return 0
+    fi
+
+    log_error "更新 JSON 文件失败: $file"
+    if [[ -s "${tmp_file}.err" ]]; then
+        while IFS= read -r line; do
+            log_error "jq: $line"
+        done < "${tmp_file}.err"
+    fi
+    rm -f "$tmp_file" "${tmp_file}.err"
+    return 1
+}
+
 # IP 地址验证
 validate_ip() {
     local ip=$1

@@ -84,10 +84,18 @@ bind_user_to_node() {
     if [[ -z "$binding_exists" ]]; then
         # 创建新绑定
         local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-        jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "创建绑定失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
     else
         # 添加用户到现有绑定
-        jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "添加用户到绑定失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
     fi
 
     mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -143,7 +151,11 @@ unbind_user_from_node() {
     fi
 
     # 解绑用户
-    jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        print_error "解绑用户失败"
+        rm -f "${NODE_USERS_FILE}.tmp"
+        return 1
+    fi
     mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
 
     print_success "用户 $email 已从端口 $port 解绑"
@@ -387,9 +399,17 @@ bind_single_node_to_user() {
 
     if [[ -z "$binding_exists" ]]; then
         local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-        jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "创建绑定失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
     else
-        jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "添加用户到绑定失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
     fi
 
     mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -444,9 +464,17 @@ batch_bind_nodes_to_user() {
 
         if [[ -z "$binding_exists" ]]; then
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "创建绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         else
-            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "添加用户到绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         fi
 
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -498,7 +526,11 @@ unbind_single_node_from_user() {
     fi
 
     # 移除绑定
-    jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        print_error "移除绑定失败"
+        rm -f "${NODE_USERS_FILE}.tmp"
+        return 1
+    fi
     mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
 
     generate_xray_config
@@ -544,7 +576,11 @@ batch_unbind_nodes_from_user() {
 
     local success_count=0
     for port in $ports; do
-        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "从端口 $port 解绑失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            continue
+        fi
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_success "已从端口 $port 解绑"
         ((success_count++))
@@ -626,10 +662,18 @@ batch_bind_user_to_nodes() {
         if [[ -z "$binding_exists" ]]; then
             # 创建新绑定
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "创建绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         else
             # 添加用户到现有绑定
-            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "添加用户到绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         fi
 
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -689,9 +733,17 @@ bind_single_user_to_node() {
 
     if [[ -z "$binding_exists" ]]; then
         local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-        jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "创建绑定失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
     else
-        jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "添加用户到绑定失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            return 1
+        fi
     fi
 
     mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -743,9 +795,17 @@ batch_bind_users_to_node() {
 
         if [[ -z "$binding_exists" ]]; then
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "创建绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         else
-            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "添加用户到绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         fi
 
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -801,7 +861,11 @@ unbind_single_user_from_node() {
     fi
 
     # 移除绑定
-    jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+    if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        print_error "移除绑定失败"
+        rm -f "${NODE_USERS_FILE}.tmp"
+        return 1
+    fi
     mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
 
     generate_xray_config
@@ -858,7 +922,11 @@ batch_unbind_users_from_node() {
             continue
         fi
 
-        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "移除用户 $username 失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            continue
+        fi
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_success "已移除用户 $username"
         ((success_count++))
@@ -1059,9 +1127,17 @@ bind_nodes_to_user_smart() {
 
         if [[ -z "$binding_exists" ]]; then
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "创建绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         else
-            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "添加用户到绑定失败"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         fi
 
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -1177,7 +1253,11 @@ unbind_nodes_from_user_smart() {
         fi
 
         # 解绑操作
-        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "从节点 (端口 $port) 解绑失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            continue
+        fi
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_success "已从节点 (端口 $port) 解绑"
         ((success_count++))
@@ -1329,10 +1409,18 @@ bind_users_to_node_smart() {
         if [[ -z "$binding_exists" || "$binding_exists" == "null" ]]; then
             # Create new binding entry
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "Failed to create binding"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         else
             # Append to existing binding
-            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+                print_error "Failed to add user to binding"
+                rm -f "${NODE_USERS_FILE}.tmp"
+                continue
+            fi
         fi
 
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
@@ -1406,7 +1494,11 @@ unbind_users_from_node_smart() {
             continue
         fi
 
-        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            print_error "移除用户 $username 失败"
+            rm -f "${NODE_USERS_FILE}.tmp"
+            continue
+        fi
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_success "已移除用户 $username"
         ((success_count++))
