@@ -390,27 +390,29 @@ delete_single_user() {
                 print_info "已删除订阅: $sub_name"
             done <<< "$sub_names"
 
-            # 从元数据中删除
-            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
-                print_error "清理订阅元数据失败"
-                return 1
+            # 从元数据中删除 - 使用安全JSON更新
+            if ! safe_json_update ".subscriptions = [.subscriptions[] | select(.user_id != \$uuid)]" "$SUBSCRIPTION_META_FILE" --arg uuid "$uuid"; then
+                print_warning "清理订阅元数据失败，但继续删除用户"
+            else
+                print_info "已清理订阅元数据"
             fi
-            print_info "已清理订阅元数据"
         fi
     fi
 
-    # 2. 从所有节点解绑
+    # 2. 从所有节点解绑 - 使用安全JSON更新
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
-            print_error "清理节点绑定关系失败"
-            return 1
+        if ! safe_json_update "(.bindings[].users) |= map(select(. != \$uuid))" "$NODE_USERS_FILE" --arg uuid "$uuid"; then
+            print_warning "清理节点绑定关系失败，但继续删除用户"
+        else
+            print_info "已清理节点绑定关系"
         fi
-        print_info "已清理节点绑定关系"
     fi
 
-    # 3. 从全局用户列表删除
-    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
-    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+    # 3. 从全局用户列表删除 - 使用安全JSON更新
+    if ! safe_json_update ".users = [.users[] | select(.id != \$uuid)]" "$USERS_FILE" --arg uuid "$uuid"; then
+        print_error "删除用户失败"
+        return 1
+    fi
 
     print_success "用户删除成功"
 
@@ -467,27 +469,29 @@ delete_global_user() {
                 print_info "已删除订阅: $sub_name"
             done <<< "$sub_names"
 
-            # 从元数据中删除
-            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
-                print_error "清理订阅元数据失败"
-                return 1
+            # 从元数据中删除 - 使用安全JSON更新
+            if ! safe_json_update ".subscriptions = [.subscriptions[] | select(.user_id != \$uuid)]" "$SUBSCRIPTION_META_FILE" --arg uuid "$uuid"; then
+                print_warning "清理订阅元数据失败，但继续删除用户"
+            else
+                print_info "已清理订阅元数据"
             fi
-            print_info "已清理订阅元数据"
         fi
     fi
 
-    # 2. 从所有节点解绑
+    # 2. 从所有节点解绑 - 使用安全JSON更新
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
-            print_error "清理节点绑定关系失败"
-            return 1
+        if ! safe_json_update "(.bindings[].users) |= map(select(. != \$uuid))" "$NODE_USERS_FILE" --arg uuid "$uuid"; then
+            print_warning "清理节点绑定关系失败，但继续删除用户"
+        else
+            print_info "已清理节点绑定关系"
         fi
-        print_info "已清理节点绑定关系"
     fi
 
-    # 3. 从全局用户列表删除
-    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
-    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+    # 3. 从全局用户列表删除 - 使用安全JSON更新
+    if ! safe_json_update ".users = [.users[] | select(.id != \$uuid)]" "$USERS_FILE" --arg uuid "$uuid"; then
+        print_error "删除用户失败"
+        return 1
+    fi
 
     print_success "用户删除成功"
 
