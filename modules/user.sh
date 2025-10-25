@@ -70,8 +70,8 @@ init_admin_user() {
         '{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: (now|todate), enabled: true}')
 
     # 验证生成的JSON是否有效
-    if [[ -z "$admin_data" ]] || ! echo "$admin_data" | jq empty >/dev/null 2>&1; then
-        print_error "生成admin用户数据失败：数据格式错误"
+    if [[ $? -ne 0 ]] || [[ -z "$admin_data" ]]; then
+        print_error "生成admin用户数据失败"
         return 1
     fi
 
@@ -225,21 +225,21 @@ add_global_user() {
         echo '{"users":[]}' > "$USERS_FILE"
     fi
 
+    # 使用 --arg 代替 --argjson，在 jq 表达式中转换类型
     local user_data=$(jq -n \
         --arg id "$uuid" \
         --arg username "$username" \
         --arg password "$password" \
         --arg email "$email" \
-        --argjson level "$level" \
+        --arg level "$level" \
         --arg traffic_limit "$traffic_limit_gb" \
         --arg traffic_used "0" \
         --arg expire "$expire_date" \
-        '{id: $id, username: $username, password: $password, email: $email, level: $level, traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
+        '{id: $id, username: $username, password: $password, email: $email, level: ($level|tonumber), traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
 
     # 验证生成的JSON是否有效
-    if [[ -z "$user_data" ]] || ! echo "$user_data" | jq empty >/dev/null 2>&1; then
-        print_error "生成用户数据失败：数据格式错误"
-        echo "调试信息: uuid=$uuid, username=$username, email=$email"
+    if [[ $? -ne 0 ]] || [[ -z "$user_data" ]]; then
+        print_error "生成用户数据失败"
         return 1
     fi
 
@@ -678,9 +678,8 @@ save_user_info() {
         '{port: $port, protocol: $protocol, id: $id, email: $email, created: now|todate}')
 
     # 验证生成的JSON是否有效
-    if [[ -z "$user_data" ]] || ! echo "$user_data" | jq empty >/dev/null 2>&1; then
-        print_error "生成用户数据失败：数据格式错误"
-        echo "调试信息: port=$port, protocol=$protocol, id=$id, email=$email"
+    if [[ $? -ne 0 ]] || [[ -z "$user_data" ]]; then
+        print_error "生成用户数据失败"
         return 1
     fi
 
