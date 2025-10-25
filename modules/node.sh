@@ -43,17 +43,6 @@ bind_admin_to_node() {
     local port=$1
     local protocol=$2
 
-    # 验证并修复必要的 JSON 文件
-    if ! validate_json_file "$USERS_FILE"; then
-        print_warning "用户文件格式错误，尝试修复..."
-        repair_json_file "$USERS_FILE" '{"users":[]}'
-    fi
-
-    if ! validate_json_file "$NODE_USERS_FILE"; then
-        print_warning "节点绑定文件格式错误，尝试修复..."
-        repair_json_file "$NODE_USERS_FILE" '{"bindings":[]}'
-    fi
-
     # 获取admin用户信息
     local admin_user=$(jq -r '.users[] | select(.username == "admin")' "$USERS_FILE" 2>/dev/null)
     if [[ -z "$admin_user" || "$admin_user" == "null" ]]; then
@@ -79,14 +68,7 @@ bind_admin_to_node() {
             --arg protocol "$protocol" \
             --arg user "$admin_uuid" \
             '{port: $port, protocol: $protocol, users: [$user]}')
-
-        if [[ -z "$binding_data" ]]; then
-            print_error "绑定数据生成失败"
-            return 1
-        fi
-
-        # 添加绑定
-        jq --argjson binding "$binding_data" '.bindings += [$binding]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp" && \
+        jq ".bindings += [$binding_data]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
         mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
     fi
 
@@ -478,7 +460,7 @@ quick_add_vless_reality() {
     echo ""
 
     # 生成并显示分享链接
-    generate_vless_reality_share "$admin_uuid" "$admin_remark" "$port" "$server_names" "$public_key" "$short_id"
+    generate_vless_reality_share "$admin_uuid" "$admin_remark" "$port" "$dest_server" "$server_names" "$public_key" "$short_id"
 
     echo ""
     echo -e "${GREEN}✅ 节点创建完成并已绑定admin用户！${NC}"
@@ -931,10 +913,8 @@ delete_node() {
 
     # 1. 从节点绑定关系中删除该端口
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE"; then
-            print_error "清理节点绑定关系失败"
-            return 1
-        fi
+        jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
@@ -1175,17 +1155,13 @@ modify_node_config() {
                 fi
 
                 # 更新节点信息
-                if ! update_json_file ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE"; then
-                    print_error "更新节点端口失败"
-                    return 1
-                fi
+                jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
                 # 更新绑定信息
                 if [[ -f "$NODE_USERS_FILE" ]]; then
-                    if ! update_json_file ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE"; then
-                        print_error "更新绑定端口失败"
-                        return 1
-                    fi
+                    jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                    mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                 fi
 
                 # 更新配置文件
@@ -1216,16 +1192,11 @@ modify_node_config() {
                         local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
                         if [[ -z "$binding_exists" ]]; then
                             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-                            if ! update_json_file ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE"; then
-                                print_error "添加绑定失败"
-                                return 1
-                            fi
+                            jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
                         else
-                            if ! update_json_file "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE"; then
-                                print_error "更新用户绑定失败"
-                                return 1
-                            fi
+                            jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
                         fi
+                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                         generate_xray_config
                         restart_xray
                         print_success "用户已绑定"
@@ -1252,10 +1223,8 @@ modify_node_config() {
                 if [[ -n "$username" ]]; then
                     local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
                     if [[ -n "$uuid" ]]; then
-                        if ! update_json_file '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE"; then
-                            print_error "解绑用户失败"
-                            return 1
-                        fi
+                        jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                         generate_xray_config
                         restart_xray
                         print_success "用户已解绑"
@@ -1312,10 +1281,8 @@ delete_single_node() {
 
     # 清理节点绑定
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE"; then
-            print_error "清理节点绑定失败"
-            return 1
-        fi
+        jq ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
     fi
 
     restart_xray
@@ -1349,12 +1316,6 @@ save_node_info() {
     local extra_config=$5  # JSON格式的额外配置（Reality参数等）
     local name=$6          # 节点名称（可选，如果为空则自动生成）
 
-    # 验证并修复节点文件
-    if ! validate_json_file "$NODES_FILE"; then
-        print_warning "节点文件格式错误，尝试修复..."
-        repair_json_file "$NODES_FILE" '{"nodes":[]}'
-    fi
-
     # 如果没有提供name，自动生成
     if [[ -z "$name" ]]; then
         name="${protocol}-${port}"
@@ -1379,29 +1340,26 @@ save_node_info() {
 # 从数据库删除节点
 remove_node_info() {
     local port=$1
-    if ! update_json_file ".nodes = [.nodes[] | select(.port != \"$port\")]" "$NODES_FILE"; then
-        print_error "删除节点信息失败"
-        return 1
-    fi
+    jq ".nodes = [.nodes[] | select(.port != \"$port\")]" "$NODES_FILE" > "${NODES_FILE}.tmp"
+    mv "${NODES_FILE}.tmp" "$NODES_FILE"
 }
 
 # 添加入站到配置文件
 add_inbound_to_config() {
     local inbound=$1
 
-    if ! update_json_file --argjson inbound "$inbound" '.inbounds += [$inbound]' "$XRAY_CONFIG"; then
-        print_error "添加入站信息失败"
-        return 1
-    fi
+    # 读取当前配置
+    local current_config=$(cat "$XRAY_CONFIG")
+
+    # 添加新的入站
+    echo "$current_config" | jq ".inbounds += [$inbound]" > "$XRAY_CONFIG"
 }
 
 # 从配置文件删除入站
 remove_inbound_from_config() {
     local port=$1
-    if ! update_json_file ".inbounds = [.inbounds[] | select(.port != $port)]" "$XRAY_CONFIG"; then
-        print_error "移除入站信息失败"
-        return 1
-    fi
+    jq ".inbounds = [.inbounds[] | select(.port != $port)]" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
+    mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
 }
 
 #================================================================

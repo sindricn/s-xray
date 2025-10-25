@@ -216,17 +216,16 @@ add_global_user() {
         echo '{"users":[]}' > "$USERS_FILE"
     fi
 
-    # 使用 --arg 代替 --argjson，在 jq 表达式中转换类型
     local user_data=$(jq -n \
         --arg id "$uuid" \
         --arg username "$username" \
         --arg password "$password" \
         --arg email "$email" \
-        --arg level "$level" \
+        --argjson level "$level" \
         --arg traffic_limit "$traffic_limit_gb" \
         --arg traffic_used "0" \
         --arg expire "$expire_date" \
-        '{id: $id, username: $username, password: $password, email: $email, level: ($level|tonumber), traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
+        '{id: $id, username: $username, password: $password, email: $email, level: $level, traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
 
     jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
@@ -392,20 +391,16 @@ delete_single_user() {
             done <<< "$sub_names"
 
             # 从元数据中删除
-            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
-                print_error "清理订阅元数据失败"
-                return 1
-            fi
+            jq ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+            mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
             print_info "已清理订阅元数据"
         fi
     fi
 
     # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
-            print_error "清理节点绑定关系失败"
-            return 1
-        fi
+        jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
@@ -459,27 +454,26 @@ delete_global_user() {
 
     # 1. 删除该用户的所有订阅
     if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
+        # 获取该用户的所有订阅名称
         local sub_names=$(jq -r ".subscriptions[] | select(.user_id == \"$uuid\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
         if [[ -n "$sub_names" ]]; then
             while IFS= read -r sub_name; do
+                # 删除订阅文件
                 find "$SUBSCRIPTION_DIR" -name "${sub_name}.*" -type f -delete 2>/dev/null
-                print_info "已删除订阅文件: $sub_name"
+                print_info "已删除订阅: $sub_name"
             done <<< "$sub_names"
 
-            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
-                print_error "清理订阅元数据失败"
-                return 1
-            fi
+            # 从元数据中删除
+            jq ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
+            mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
             print_info "已清理订阅元数据"
         fi
     fi
 
     # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
-            print_error "清理节点绑定关系失败"
-            return 1
-        fi
+        jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
@@ -613,11 +607,7 @@ add_user_to_node() {
         shadowsocks)
             # Shadowsocks 不支持多用户，需要重新配置密码
             print_warning "Shadowsocks 节点需要更新密码配置"
-            if ! jq "(.inbounds[] | select(.port == $port) | .settings.password) = \"$id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"; then
-                print_error "更新Shadowsocks密码失败"
-                rm -f "${XRAY_CONFIG}.tmp"
-                return 1
-            fi
+            jq "(.inbounds[] | select(.port == $port) | .settings.password) = \"$id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
             mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
             return 0
             ;;
@@ -625,11 +615,7 @@ add_user_to_node() {
 
     # 添加到配置文件
     if [[ -n "$user_config" ]]; then
-        if ! jq "(.inbounds[] | select(.port == $port) | .settings.clients) += [$user_config]" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"; then
-            print_error "添加用户配置失败"
-            rm -f "${XRAY_CONFIG}.tmp"
-            return 1
-        fi
+        jq "(.inbounds[] | select(.port == $port) | .settings.clients) += [$user_config]" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
         mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
     fi
 }
@@ -649,8 +635,11 @@ save_user_info() {
         --arg email "$email" \
         '{port: $port, protocol: $protocol, id: $id, email: $email, created: now|todate}')
 
-    jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
-    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+    # 读取现有数据
+    local current_data=$(cat "$USERS_FILE")
+
+    # 添加新用户
+    echo "$current_data" | jq ".users += [$user_data]" > "$USERS_FILE"
 }
 
 
@@ -661,19 +650,11 @@ update_user_email() {
     local new_email=$3
 
     # 更新配置文件
-    if ! jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$old_email\") | .email) = \"$new_email\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"; then
-        print_error "更新配置文件邮箱失败"
-        rm -f "${XRAY_CONFIG}.tmp"
-        return 1
-    fi
+    jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$old_email\") | .email) = \"$new_email\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
     mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
 
     # 更新数据库
-    if ! jq "(.users[] | select(.port == \"$port\" and .email == \"$old_email\") | .email) = \"$new_email\"" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
-        print_error "更新数据库邮箱失败"
-        rm -f "${USERS_FILE}.tmp"
-        return 1
-    fi
+    jq "(.users[] | select(.port == \"$port\" and .email == \"$old_email\") | .email) = \"$new_email\"" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 }
 
@@ -689,35 +670,19 @@ update_user_id() {
     # 更新配置文件
     case $protocol in
         vless|vmess)
-            if ! jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .id) = \"$new_id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"; then
-                print_error "更新配置文件ID失败"
-                rm -f "${XRAY_CONFIG}.tmp"
-                return 1
-            fi
+            jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .id) = \"$new_id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
             ;;
         trojan)
-            if ! jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .password) = \"$new_id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"; then
-                print_error "更新配置文件密码失败"
-                rm -f "${XRAY_CONFIG}.tmp"
-                return 1
-            fi
+            jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .password) = \"$new_id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
             ;;
         shadowsocks)
-            if ! jq "(.inbounds[] | select(.port == $port) | .settings.password) = \"$new_id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"; then
-                print_error "更新配置文件密码失败"
-                rm -f "${XRAY_CONFIG}.tmp"
-                return 1
-            fi
+            jq "(.inbounds[] | select(.port == $port) | .settings.password) = \"$new_id\"" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
             ;;
     esac
     mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
 
     # 更新数据库
-    if ! jq "(.users[] | select(.port == \"$port\" and .email == \"$email\") | .id) = \"$new_id\"" "$USERS_FILE" > "${USERS_FILE}.tmp"; then
-        print_error "更新数据库ID失败"
-        rm -f "${USERS_FILE}.tmp"
-        return 1
-    fi
+    jq "(.users[] | select(.port == \"$port\" and .email == \"$email\") | .id) = \"$new_id\"" "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 }
 
@@ -728,11 +693,7 @@ update_user_level() {
     local new_level=$3
 
     # 更新配置文件
-    if ! jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .level) = $new_level" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"; then
-        print_error "更新用户等级失败"
-        rm -f "${XRAY_CONFIG}.tmp"
-        return 1
-    fi
+    jq "(.inbounds[] | select(.port == $port) | .settings.clients[] | select(.email == \"$email\") | .level) = $new_level" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
     mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
 }
 

@@ -10,74 +10,18 @@
 # 订阅元数据文件
 SUBSCRIPTION_META_FILE="${DATA_DIR}/subscription_metadata.json"
 
-# 获取用户绑定的节点端口列表
-# 参数: $1=user_id
-# 返回: 通过user_node_ports数组返回端口列表
-get_user_bound_ports() {
-    local user_id="$1"
-    user_node_ports=()
-
-    if [[ -z "$user_id" || ! -f "$NODE_USERS_FILE" ]]; then
-        return 0
-    fi
-
-    while IFS= read -r binding; do
-        local bport=$(echo "$binding" | jq -r '.port')
-        local users=$(echo "$binding" | jq -r '.users[]')
-
-        # 检查用户是否在该节点的用户列表中
-        if echo "$users" | grep -q "$user_id"; then
-            user_node_ports+=("$bport")
-        fi
-    done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
-}
-
 # 查找订阅文件的实际路径
 # 参数: 订阅基础名称 (不带后缀)
 # 返回: 实际文件路径，如果不存在返回空
 find_subscription_file() {
     local sub_name="$1"
-    local user_id=""
-    local sub_type=""
-
-    if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
-        local meta=$(jq -r ".subscriptions[] | select(.name == \"$sub_name\")" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
-        if [[ -n "$meta" && "$meta" != "null" ]]; then
-            user_id=$(echo "$meta" | jq -r '.user_id // empty')
-            sub_type=$(echo "$meta" | jq -r '.type // empty')
-        fi
-    fi
 
     # 尝试所有可能的后缀
     local possible_files=(
         "${SUBSCRIPTION_DIR}/${sub_name}.txt"
         "${SUBSCRIPTION_DIR}/${sub_name}_raw.txt"
         "${SUBSCRIPTION_DIR}/${sub_name}_clash.yaml"
-        "${SUBSCRIPTION_DIR}/${sub_name}_singbox.json"
     )
-
-    if [[ -n "$user_id" ]]; then
-        case "$sub_type" in
-            clash|3)
-                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_clash.yaml")
-                ;;
-            singbox|4)
-                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_singbox.json")
-                ;;
-            raw|2)
-                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_raw.txt")
-                ;;
-            *)
-                possible_files+=("${SUBSCRIPTION_DIR}/${sub_name}_${user_id}_base64.txt")
-                ;;
-        esac
-    fi
-
-    while IFS= read -r candidate; do
-        if [[ -n "$candidate" ]]; then
-            possible_files+=("$candidate")
-        fi
-    done < <(find "$SUBSCRIPTION_DIR" -maxdepth 1 -type f -name "${sub_name}_*" 2>/dev/null)
 
     for file in "${possible_files[@]}"; do
         if [[ -f "$file" ]]; then
@@ -119,19 +63,11 @@ save_subscription_metadata() {
 
     if [[ -n "$existing" ]]; then
         # 更新现有元数据
-        if ! jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {type: \"$sub_type\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
-            "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"; then
-            print_error "更新订阅元数据失败"
-            rm -f "${SUBSCRIPTION_META_FILE}.tmp"
-            return 1
-        fi
+        jq ".subscriptions |= map(if .name == \"$sub_name\" then . + {type: \"$sub_type\", updated: \"$(date '+%Y-%m-%d %H:%M:%S')\"} else . end)" \
+            "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
     else
         # 添加新元数据
-        if ! jq ".subscriptions += [$metadata]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"; then
-            print_error "添加订阅元数据失败"
-            rm -f "${SUBSCRIPTION_META_FILE}.tmp"
-            return 1
-        fi
+        jq ".subscriptions += [$metadata]" "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"
     fi
 
     mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
@@ -164,11 +100,7 @@ delete_subscription_metadata() {
     fi
 
     # 使用--arg传递参数，避免特殊字符问题
-    if ! jq --arg name "$sub_name" '.subscriptions |= map(select(.name != $name))' "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp"; then
-        print_error "删除订阅元数据失败"
-        rm -f "${SUBSCRIPTION_META_FILE}.tmp"
-        return 1
-    fi
+    jq --arg name "$sub_name" '.subscriptions |= map(select(.name != $name))' "$SUBSCRIPTION_META_FILE" > "${SUBSCRIPTION_META_FILE}.tmp" && \
     mv "${SUBSCRIPTION_META_FILE}.tmp" "$SUBSCRIPTION_META_FILE"
 }
 
@@ -268,58 +200,6 @@ get_public_ip() {
     echo "$ip"
 }
 
-# 获取订阅服务配置中优先使用的域名
-get_subscription_domain_hint() {
-    for domain_file in "${DATA_DIR}/server_domain.txt" "${DATA_DIR}/host_domain.txt"; do
-        if [[ -f "$domain_file" ]]; then
-            local domain
-            domain=$(tr -d ' \r\n' < "$domain_file")
-            if [[ -n "$domain" && "$domain" != "未设置" ]]; then
-                echo "$domain"
-                return 0
-            fi
-        fi
-    done
-    echo ""
-}
-
-# 根据节点配置解析分享链接所需主机
-resolve_subscription_host() {
-    local node_json="$1"
-
-    local protocol
-    protocol=$(echo "$node_json" | jq -r '.protocol')
-    local security
-    security=$(echo "$node_json" | jq -r '.security // "none"')
-    local extra
-    extra=$(echo "$node_json" | jq -c '.extra // {}')
-
-    local host=""
-
-    if [[ -z "$host" ]]; then
-        case "$protocol" in
-            vless|vmess|trojan)
-                host=$(echo "$extra" | jq -r '.tls_domain // ""')
-                [[ "$host" == "null" ]] && host=""
-                ;;
-        esac
-    fi
-
-    if [[ -z "$host" ]]; then
-        host=$(get_subscription_domain_hint)
-    fi
-
-    if [[ -z "$host" ]]; then
-        host=$(get_public_ip)
-    fi
-
-    if [[ -z "$host" ]]; then
-        host="127.0.0.1"
-    fi
-
-    echo "$host"
-}
-
 # URL 编码
 urlencode() {
     local string="$1"
@@ -336,14 +216,6 @@ urlencode() {
         encoded+="${o}"
     done
     echo "${encoded}"
-}
-
-# YAML 字符串转义（处理反斜杠与双引号）
-escape_yaml_string() {
-    local input="$1"
-    input="${input//\\/\\\\}"
-    input="${input//\"/\\\"}"
-    echo "$input"
 }
 
 # Base64 编码（无换行）
@@ -373,7 +245,7 @@ generate_vless_reality_link_from_config() {
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra字段提取Reality参数
     local dest=$(echo "$extra" | jq -r '.dest // ""')
@@ -394,11 +266,10 @@ generate_vless_reality_link_from_config() {
         sni=$(echo "$dest" | cut -d':' -f1)
     fi
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # 构建VLESS Reality链接
-    local share_link="vless://${uuid}@${server_host}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(urlencode "$remark")"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&flow=${flow}&security=reality&sni=${sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(urlencode "$remark")"
 
     echo "$share_link"
 }
@@ -412,7 +283,7 @@ generate_vless_tls_link_from_config() {
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
     local security=$(echo "$node_json" | jq -r '.security // "none"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 检查是否有TLS
     if [[ "$security" != "tls" ]]; then
@@ -425,11 +296,10 @@ generate_vless_tls_link_from_config() {
     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
     local grpc_service=$(echo "$extra" | jq -r '.grpc_service // ""')
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # 构建链接
-    local share_link="vless://${uuid}@${server_host}:${port}?encryption=none&security=tls&type=${transport}"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&security=tls&type=${transport}"
 
     if [[ -n "$tls_domain" ]]; then
         share_link+="&sni=${tls_domain}"
@@ -456,16 +326,15 @@ generate_vless_plain_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取参数
     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
     local grpc_service=$(echo "$extra" | jq -r '.grpc_service // ""')
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
-    local share_link="vless://${uuid}@${server_host}:${port}?encryption=none&type=${transport}"
+    local share_link="vless://${uuid}@${server_ip}:${port}?encryption=none&type=${transport}"
 
     if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
         share_link+="&path=$(urlencode "$ws_path")"
@@ -488,22 +357,21 @@ generate_vmess_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取参数
     local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
     local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
 
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # VMess JSON格式
     local vmess_json=$(cat <<EOF
 {
   "v": "2",
   "ps": "${remark}",
-  "add": "${server_host}",
+  "add": "${server_ip}",
   "port": ${port},
   "id": "${uuid}",
   "aid": ${alter_id},
@@ -534,19 +402,18 @@ generate_trojan_link_from_config() {
 
     local port=$(echo "$node_json" | jq -r '.port')
     local transport=$(echo "$node_json" | jq -r '.transport // "tcp"')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取参数
     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     local sni="${tls_domain}"
     if [[ -z "$sni" ]]; then
-        sni=$server_host
+        sni=$server_ip
     fi
 
-    local share_link="trojan://${password}@${server_host}:${port}?security=tls&sni=${sni}&type=${transport}#$(urlencode "$remark")"
+    local share_link="trojan://${password}@${server_ip}:${port}?security=tls&sni=${sni}&type=${transport}#$(urlencode "$remark")"
 
     echo "$share_link"
 }
@@ -558,18 +425,17 @@ generate_ss_link_from_config() {
     local node_json=$3
 
     local port=$(echo "$node_json" | jq -r '.port')
-    local extra=$(echo "$node_json" | jq -c '.extra // {}')
+    local extra=$(echo "$node_json" | jq -r '.extra')
 
     # 从extra提取cipher
     local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
-    local server_host
-    server_host=$(resolve_subscription_host "$node_json")
+    local server_ip=$(get_public_ip)
 
     # SIP002格式
     local userinfo="${cipher}:${password}"
     local encoded=$(base64_encode "$userinfo")
 
-    local share_link="ss://${encoded}@${server_host}:${port}#$(urlencode "$remark")"
+    local share_link="ss://${encoded}@${server_ip}:${port}#$(urlencode "$remark")"
 
     echo "$share_link"
 }
@@ -633,6 +499,8 @@ generate_clash_config() {
     local user_id="$2"
     local user_password="$3"
 
+    local server_ip=$(get_public_ip)
+
     # 验证必需参数
     if [[ -z "$user_id" ]]; then
         echo "# ERROR: user_id is required" >&2
@@ -677,12 +545,9 @@ EOF
         local transport=$(echo "$node" | jq -r '.transport // "tcp"')
         local extra=$(echo "$node" | jq -r '.extra')
         local node_name_raw=$(echo "$node" | jq -r '.name // "未命名"')
-        local node_host=$(resolve_subscription_host "$node")
-        local node_name="${node_name_raw}-${username}"
-        local safe_node_name=$(escape_yaml_string "$node_name")
 
-        # 调试信息 (只在需要时输出)
-        [[ "${DEBUG_MODE:-0}" == "1" ]] && echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
+        # 调试信息
+        echo "# DEBUG: Processing node $processed_count: protocol=$protocol, port=$port, security=$security" >&2
 
         local node_config=""
 
@@ -690,6 +555,9 @@ EOF
             vless)
                 # VLESS Reality 支持（Clash Meta）
                 if [[ "$security" == "reality" ]]; then
+                    local node_name="${node_name_raw}-${username}"
+                    proxy_list+=("$node_name")
+
                     local dest=$(echo "$extra" | jq -r '.dest // ""')
                     local server_names=$(echo "$extra" | jq -r '.server_names[0] // ""')
                     local public_key=$(echo "$extra" | jq -r '.public_key // ""')
@@ -709,16 +577,9 @@ EOF
                         sni=$(echo "$dest" | cut -d':' -f1)
                     fi
 
-                    # 确保必需字段不为空
-                    if [[ -z "$sni" ]]; then
-                        echo "# WARNING: Skipping Reality node on port $port - missing SNI" >&2
-                        ((skipped_count++))
-                        continue
-                    fi
-
-                    node_config="  - name: \"${safe_node_name}\"
+                    node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     network: tcp
@@ -732,12 +593,13 @@ EOF
     client-fingerprint: chrome"
                 elif [[ "$security" == "tls" ]]; then
                     # VLESS TLS
+                    local node_name="${node_name_raw}-${username}"
+                    proxy_list+=("$node_name")
                     local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
                     local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-
-                    node_config="  - name: \"${safe_node_name}\"
+                    node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     udp: true
@@ -753,11 +615,13 @@ EOF
                     fi
                 else
                     # Plain VLESS (no TLS)
-                    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
+                    local node_name="${node_name_raw}-${username}"
+                    proxy_list+=("$node_name")
 
-                    node_config="  - name: \"${safe_node_name}\"
+                    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
+                    node_config="  - name: \"${node_name}\"
     type: vless
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     udp: true"
@@ -770,6 +634,9 @@ EOF
                 fi
                 ;;
             vmess)
+                local node_name="${node_name_raw}-${username}"
+                proxy_list+=("$node_name")
+
                 local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
                 local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
                 local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
@@ -786,9 +653,9 @@ EOF
                         ;;
                 esac
 
-                node_config="  - name: \"${safe_node_name}\"
+                node_config="  - name: \"${node_name}\"
     type: vmess
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     uuid: ${user_id}
     alterId: ${alter_id}
@@ -805,15 +672,16 @@ EOF
                 # Trojan 必需 password，如果为空则跳过
                 if [[ -z "$user_password" ]]; then
                     echo "# WARNING: Skipping Trojan-${port} - password required but not provided" >&2
-                    ((skipped_count++))
                     continue
                 fi
 
-                local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
+                local node_name="${node_name_raw}-${username}"
+                proxy_list+=("$node_name")
 
-                node_config="  - name: \"${safe_node_name}\"
+                local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
+                node_config="  - name: \"${node_name}\"
     type: trojan
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     password: ${user_password}
     udp: true
@@ -825,9 +693,11 @@ EOF
                 # Shadowsocks 必需 password，如果为空则跳过
                 if [[ -z "$user_password" ]]; then
                     echo "# WARNING: Skipping SS-${port} - password required but not provided" >&2
-                    ((skipped_count++))
                     continue
                 fi
+
+                local node_name="${node_name_raw}-${username}"
+                proxy_list+=("$node_name")
 
                 local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
                 # 验证 cipher 是否被 Clash 支持
@@ -841,10 +711,9 @@ EOF
                         echo "# WARNING: SS-${port} cipher not supported, using aes-256-gcm" >&2
                         ;;
                 esac
-
-                node_config="  - name: \"${safe_node_name}\"
+                node_config="  - name: \"${node_name}\"
     type: ss
-    server: ${node_host}
+    server: ${server_ip}
     port: ${port}
     cipher: ${cipher}
     password: ${user_password}
@@ -852,14 +721,11 @@ EOF
                 ;;
         esac
 
-        if [[ -n "$node_config" ]]; then
-            proxy_configs+=("$node_config")
-            proxy_list+=("$safe_node_name")
-        fi
+        [[ -n "$node_config" ]] && proxy_configs+=("$node_config")
     done < <(echo "$nodes_array" | jq -c '.[]')
 
-    # 调试统计信息 (只在需要时输出)
-    [[ "${DEBUG_MODE:-0}" == "1" ]] && echo "# DEBUG: Total processed: $processed_count, Skipped: $skipped_count, Generated: ${#proxy_configs[@]}" >&2
+    # 调试统计信息
+    echo "# DEBUG: Total processed: $processed_count, Skipped: $skipped_count, Generated: ${#proxy_configs[@]}" >&2
 
     # 验证是否有有效节点
     if [[ ${#proxy_configs[@]} -eq 0 ]]; then
@@ -1087,408 +953,7 @@ show_node_share_link() {
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         print_success "共生成 $link_count 个用户链接"
     fi
-}
-
-# 生成 sing-box JSON 配置
-generate_singbox_config() {
-    local nodes_array="$1"  # JSON数组格式的节点列表
-    local user_id="$2"
-    local user_password="$3"
-
-    # 验证必需参数
-    if [[ -z "$user_id" ]]; then
-        echo "# ERROR: user_id is required" >&2
-        return 1
-    fi
-
-    # 对于需要password的协议，如果为空则尝试获取
-    if [[ -z "$user_password" ]]; then
-        user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
-    fi
-
-    # sing-box JSON 配置框架
-    local outbounds='[]'
-    local proxy_tags='[]'
-    local skipped_count=0
-    local processed_count=0
-
-    # 遍历节点生成 outbound 配置
-    while IFS= read -r node; do
-        [[ -z "$node" || "$node" == "null" ]] && continue
-
-        ((processed_count++))
-
-        local protocol=$(echo "$node" | jq -r '.protocol')
-        local port=$(echo "$node" | jq -r '.port')
-        local security=$(echo "$node" | jq -r '.security // "none"')
-        local transport=$(echo "$node" | jq -r '.transport // "tcp"')
-        local extra=$(echo "$node" | jq -r '.extra')
-        local node_name_raw=$(echo "$node" | jq -r '.name // "未命名"')
-        local node_host=$(resolve_subscription_host "$node")
-
-        # 获取用户信息用于节点名称
-        local user=$(jq -r ".users[] | select(.id == \"$user_id\")" "$USERS_FILE" 2>/dev/null)
-        local username=$(echo "$user" | jq -r '.username // ""')
-        local node_tag="${node_name_raw}-${username}-${port}"
-
-        [[ "${DEBUG_MODE:-0}" == "1" ]] && echo "# DEBUG: Processing singbox node: protocol=$protocol, port=$port" >&2
-
-        local outbound_config=""
-
-        case $protocol in
-            vless)
-                if [[ "$security" == "reality" ]]; then
-                    # VLESS Reality
-                    local dest=$(echo "$extra" | jq -r '.dest // ""')
-                    local server_names=$(echo "$extra" | jq -r '.server_names[0] // ""')
-                    local public_key=$(echo "$extra" | jq -r '.public_key // ""')
-                    local short_id=$(echo "$extra" | jq -r '.short_ids[0] // ""')
-                    local flow=$(echo "$extra" | jq -r '.flow // "xtls-rprx-vision"')
-
-                    if [[ -z "$public_key" ]]; then
-                        echo "# WARNING: Skipping Reality node on port $port - missing public_key" >&2
-                        ((skipped_count++))
-                        continue
-                    fi
-
-                    local sni="$server_names"
-                    if [[ -z "$sni" && -n "$dest" ]]; then
-                        sni=$(echo "$dest" | cut -d':' -f1)
-                    fi
-
-                    if [[ -z "$sni" ]]; then
-                        echo "# WARNING: Skipping Reality node on port $port - missing SNI" >&2
-                        ((skipped_count++))
-                        continue
-                    fi
-
-                    outbound_config=$(jq -n \
-                        --arg tag "$node_tag" \
-                        --arg server "$node_host" \
-                        --argjson port "$port" \
-                        --arg uuid "$user_id" \
-                        --arg flow "$flow" \
-                        --arg sni "$sni" \
-                        --arg public_key "$public_key" \
-                        --arg short_id "$short_id" \
-                        '{
-                            type: "vless",
-                            tag: $tag,
-                            server: $server,
-                            server_port: $port,
-                            uuid: $uuid,
-                            flow: $flow,
-                            network: "tcp",
-                            tls: {
-                                enabled: true,
-                                server_name: $sni,
-                                utls: {
-                                    enabled: true,
-                                    fingerprint: "chrome"
-                                },
-                                reality: {
-                                    enabled: true,
-                                    public_key: $public_key,
-                                    short_id: $short_id
-                                }
-                            }
-                        }')
-                elif [[ "$security" == "tls" ]]; then
-                    # VLESS TLS
-                    local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
-                    local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-
-                    if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
-                        outbound_config=$(jq -n \
-                            --arg tag "$node_tag" \
-                            --arg server "$node_host" \
-                            --argjson port "$port" \
-                            --arg uuid "$user_id" \
-                            --arg sni "$tls_domain" \
-                            --arg path "$ws_path" \
-                            '{
-                                type: "vless",
-                                tag: $tag,
-                                server: $server,
-                                server_port: $port,
-                                uuid: $uuid,
-                                tls: {
-                                    enabled: true,
-                                    server_name: $sni,
-                                    insecure: true
-                                },
-                                transport: {
-                                    type: "ws",
-                                    path: $path
-                                }
-                            }')
-                    else
-                        outbound_config=$(jq -n \
-                            --arg tag "$node_tag" \
-                            --arg server "$node_host" \
-                            --argjson port "$port" \
-                            --arg uuid "$user_id" \
-                            --arg sni "$tls_domain" \
-                            '{
-                                type: "vless",
-                                tag: $tag,
-                                server: $server,
-                                server_port: $port,
-                                uuid: $uuid,
-                                tls: {
-                                    enabled: true,
-                                    server_name: $sni,
-                                    insecure: true
-                                }
-                            }')
-                    fi
-                else
-                    # Plain VLESS
-                    outbound_config=$(jq -n \
-                        --arg tag "$node_tag" \
-                        --arg server "$node_host" \
-                        --argjson port "$port" \
-                        --arg uuid "$user_id" \
-                        '{
-                            type: "vless",
-                            tag: $tag,
-                            server: $server,
-                            server_port: $port,
-                            uuid: $uuid
-                        }')
-                fi
-                ;;
-            vmess)
-                local alter_id=$(echo "$extra" | jq -r '.alter_id // 0')
-                local cipher=$(echo "$extra" | jq -r '.cipher // "auto"')
-                local ws_path=$(echo "$extra" | jq -r '.ws_path // ""')
-
-                if [[ "$transport" == "ws" && -n "$ws_path" ]]; then
-                    outbound_config=$(jq -n \
-                        --arg tag "$node_tag" \
-                        --arg server "$node_host" \
-                        --argjson port "$port" \
-                        --arg uuid "$user_id" \
-                        --argjson alter_id "$alter_id" \
-                        --arg cipher "$cipher" \
-                        --arg path "$ws_path" \
-                        '{
-                            type: "vmess",
-                            tag: $tag,
-                            server: $server,
-                            server_port: $port,
-                            uuid: $uuid,
-                            alter_id: $alter_id,
-                            security: $cipher,
-                            transport: {
-                                type: "ws",
-                                path: $path
-                            }
-                        }')
-                else
-                    outbound_config=$(jq -n \
-                        --arg tag "$node_tag" \
-                        --arg server "$node_host" \
-                        --argjson port "$port" \
-                        --arg uuid "$user_id" \
-                        --argjson alter_id "$alter_id" \
-                        --arg cipher "$cipher" \
-                        '{
-                            type: "vmess",
-                            tag: $tag,
-                            server: $server,
-                            server_port: $port,
-                            uuid: $uuid,
-                            alter_id: $alter_id,
-                            security: $cipher
-                        }')
-                fi
-                ;;
-            trojan)
-                if [[ -z "$user_password" ]]; then
-                    echo "# WARNING: Skipping Trojan-${port} - password required" >&2
-                    ((skipped_count++))
-                    continue
-                fi
-
-                local tls_domain=$(echo "$extra" | jq -r '.tls_domain // ""')
-
-                outbound_config=$(jq -n \
-                    --arg tag "$node_tag" \
-                    --arg server "$node_host" \
-                    --argjson port "$port" \
-                    --arg password "$user_password" \
-                    --arg sni "$tls_domain" \
-                    '{
-                        type: "trojan",
-                        tag: $tag,
-                        server: $server,
-                        server_port: $port,
-                        password: $password,
-                        tls: {
-                            enabled: true,
-                            server_name: $sni,
-                            insecure: true,
-                            utls: {
-                                enabled: true,
-                                fingerprint: "chrome"
-                            }
-                        },
-                        multiplex: {
-                            enabled: true,
-                            protocol: "smux",
-                            max_streams: 32
-                        }
-                    }')
-                ;;
-            shadowsocks)
-                if [[ -z "$user_password" ]]; then
-                    echo "# WARNING: Skipping SS-${port} - password required" >&2
-                    ((skipped_count++))
-                    continue
-                fi
-
-                local cipher=$(echo "$extra" | jq -r '.cipher // "aes-256-gcm"')
-
-                outbound_config=$(jq -n \
-                    --arg tag "$node_tag" \
-                    --arg server "$node_host" \
-                    --argjson port "$port" \
-                    --arg method "$cipher" \
-                    --arg password "$user_password" \
-                    '{
-                        type: "shadowsocks",
-                        tag: $tag,
-                        server: $server,
-                        server_port: $port,
-                        method: $method,
-                        password: $password,
-                        multiplex: {
-                            enabled: true,
-                            protocol: "smux",
-                            max_streams: 32
-                        }
-                    }')
-                ;;
-        esac
-
-        if [[ -n "$outbound_config" ]]; then
-            outbounds=$(echo "$outbounds" | jq --argjson ob "$outbound_config" '. += [$ob]')
-            proxy_tags=$(echo "$proxy_tags" | jq --arg tag "$node_tag" '. += [$tag]')
-        fi
-    done < <(echo "$nodes_array" | jq -c '.[]')
-
-    [[ "${DEBUG_MODE:-0}" == "1" ]] && echo "# DEBUG: Total processed: $processed_count, Skipped: $skipped_count, Generated: $(echo "$outbounds" | jq 'length')" >&2
-
-    # 验证是否有有效节点
-    local outbound_count=$(echo "$outbounds" | jq 'length')
-    if [[ "$outbound_count" -eq 0 ]]; then
-        echo "# ERROR: No valid nodes generated for sing-box configuration" >&2
-        echo "# Processed $processed_count nodes, skipped $skipped_count" >&2
-        return 1
-    fi
-
-    # 创建 selector 代理组
-    local selector_outbound=$(jq -n \
-        --argjson proxy_tags "$proxy_tags" \
-        '{
-            type: "selector",
-            tag: "🌏️主代理",
-            outbounds: ($proxy_tags + ["Direct"]),
-            default: $proxy_tags[0]
-        }')
-
-    # 创建 urltest 自动选择组
-    local urltest_outbound=$(jq -n \
-        --argjson proxy_tags "$proxy_tags" \
-        '{
-            type: "urltest",
-            tag: "♾️自动选择",
-            outbounds: $proxy_tags,
-            url: "http://www.gstatic.com/generate_204",
-            interval: "5m",
-            tolerance: 50
-        }')
-
-    # 添加 Direct outbound
-    local direct_outbound='{"type": "direct", "tag": "Direct"}'
-
-    # 组装最终 outbounds: [selector, urltest, 节点列表, Direct]
-    outbounds=$(echo "$outbounds" | jq --argjson selector "$selector_outbound" --argjson urltest "$urltest_outbound" --argjson direct "$direct_outbound" \
-        '. = [$selector, $urltest] + . + [$direct]')
-
-    # 生成完整的 sing-box 配置
-    jq -n \
-        --argjson outbounds "$outbounds" \
-        '{
-            log: {
-                disabled: false,
-                level: "error",
-                timestamp: true
-            },
-            dns: {
-                servers: [
-                    {
-                        tag: "dns-remote",
-                        address: "https://223.5.5.5/dns-query",
-                        strategy: "ipv4_only",
-                        detour: "Direct"
-                    },
-                    {
-                        tag: "dns-local",
-                        address: "223.5.5.5",
-                        strategy: "ipv4_only",
-                        detour: "Direct"
-                    }
-                ],
-                rules: [
-                    {
-                        outbound: ["🌏️主代理", "♾️自动选择", "Direct"],
-                        action: "route",
-                        server: "dns-local"
-                    }
-                ],
-                final: "dns-remote",
-                strategy: "ipv4_only"
-            },
-            inbounds: [
-                {
-                    type: "mixed",
-                    tag: "mixed-in",
-                    listen: "127.0.0.1",
-                    listen_port: 2080,
-                    sniff: true
-                },
-                {
-                    type: "tun",
-                    tag: "tun-in",
-                    interface_name: "singtun0",
-                    address: ["172.19.0.1/30"],
-                    auto_route: true,
-                    strict_route: true,
-                    stack: "system",
-                    mtu: 9000,
-                    sniff: true
-                }
-            ],
-            outbounds: $outbounds,
-            route: {
-                rules: [
-                    {
-                        ip_is_private: true,
-                        action: "route",
-                        outbound: "Direct"
-                    },
-                    {
-                        domain_suffix: [".cn"],
-                        action: "route",
-                        outbound: "Direct"
-                    }
-                ],
-                final: "🌏️主代理",
-                auto_detect_interface: true
-            }
-        }'
+    echo ""
 }
 
 # 生成订阅（绑定用户版）
@@ -1606,9 +1071,8 @@ generate_subscription_with_user() {
     echo -e "  ${GREEN}1.${NC} 通用订阅（Base64编码，支持V2Ray/Qv2ray等）"
     echo -e "  ${GREEN}2.${NC} 原始订阅（纯文本，支持所有客户端）"
     echo -e "  ${GREEN}3.${NC} Clash订阅（YAML格式，支持Clash系列）"
-    echo -e "  ${GREEN}4.${NC} sing-box订阅（JSON格式，支持sing-box客户端）"
     echo ""
-    read -p "请选择 [1-4，默认: 1]: " sub_type_choice
+    read -p "请选择 [1-3，默认: 1]: " sub_type_choice
     sub_type_choice=${sub_type_choice:-1}
 
     # 转换订阅类型为字符串标识
@@ -1616,7 +1080,6 @@ generate_subscription_with_user() {
         1) sub_type="general" ;;
         2) sub_type="raw" ;;
         3) sub_type="clash" ;;
-        4) sub_type="singbox" ;;
         *) sub_type="general" ;;
     esac
 
@@ -1684,7 +1147,17 @@ generate_subscription_with_user() {
 
     # 获取用户绑定的节点列表
     local user_node_ports=()
-    get_user_bound_ports "$sub_user_id"
+    if [[ -f "$NODE_USERS_FILE" ]]; then
+        while IFS= read -r binding; do
+            local bport=$(echo "$binding" | jq -r '.port')
+            local users=$(echo "$binding" | jq -r '.users[]')
+
+            # 检查用户是否在该节点的用户列表中
+            if echo "$users" | grep -q "$sub_user_id"; then
+                user_node_ports+=("$bport")
+            fi
+        done < <(jq -c '.bindings[]' "$NODE_USERS_FILE" 2>/dev/null)
+    fi
 
     if [[ ${#user_node_ports[@]} -eq 0 ]]; then
         print_warning "用户 $sub_user_email 未绑定任何节点"
@@ -1777,29 +1250,8 @@ generate_subscription_with_user() {
                 fi
             done
 
-            # 验证是否有节点数据
-            local node_count=$(echo "$nodes_json_array" | jq 'length')
-            if [[ "$node_count" -eq 0 ]]; then
-                echo ""
-                print_error "没有找到可用的节点"
-                echo ""
-                echo -e "${YELLOW}可能的原因：${NC}"
-                echo "  1. 用户未绑定任何节点"
-                echo "  2. 节点数据文件不存在或为空"
-                echo "  3. 节点端口匹配失败"
-                echo ""
-                echo -e "${CYAN}建议操作：${NC}"
-                echo "  1. 检查用户绑定的节点: ${NODES_FILE}"
-                echo "  2. 确认节点端口是否正确"
-                echo "  3. 先为用户绑定节点，再生成订阅"
-                echo ""
-                return 1
-            fi
-
-            # 生成Clash配置（分离stdout和stderr）
-            # 创建临时文件存储stderr
-            local clash_stderr_file=$(mktemp)
-            local clash_output=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>"$clash_stderr_file")
+            # 生成Clash配置（捕获错误输出）
+            local clash_output=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>&1)
             local clash_exit_code=$?
 
             if [[ $clash_exit_code -ne 0 ]]; then
@@ -1807,8 +1259,7 @@ generate_subscription_with_user() {
                 print_error "Clash配置生成失败"
                 echo ""
                 echo -e "${YELLOW}详细信息：${NC}"
-                # 显示所有错误和警告信息
-                cat "$clash_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /'
+                echo "$clash_output" | grep -E "^#" | sed 's/^# /  /'
                 echo ""
                 echo -e "${CYAN}提示：${NC}"
                 echo "  1. Reality 节点需要 public_key 字段"
@@ -1816,103 +1267,12 @@ generate_subscription_with_user() {
                 echo "  3. 检查节点数据结构是否完整"
                 echo "  4. 可以尝试使用【通用订阅】或【原始订阅】格式"
                 echo ""
-
-                # 清理临时文件
-                rm -f "$clash_stderr_file"
                 return 1
             fi
 
-            # 验证生成的配置是否有效
-            if [[ -z "$clash_output" ]]; then
-                echo ""
-                print_error "Clash配置生成为空"
-                echo ""
-                echo -e "${YELLOW}详细信息：${NC}"
-                cat "$clash_stderr_file" | sed 's/^# /  /'
-                echo ""
-                rm -f "$clash_stderr_file"
-                return 1
-            fi
-
-            # 配置有效，直接使用（DEBUG信息已通过条件判断被禁用）
             sub_content="$clash_output"
-
-            # 清理临时文件
-            rm -f "$clash_stderr_file"
             # 文件名格式: {name}_{user_id}_clash.yaml
             sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_clash.yaml"
-            ;;
-        singbox)
-            # sing-box订阅 - JSON格式
-            # 收集用户绑定的节点JSON数组
-            local nodes_json_array="[]"
-            for port in "${user_node_ports[@]}"; do
-                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
-                if [[ -n "$node" && "$node" != "null" ]]; then
-                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
-                fi
-            done
-
-            # 验证是否有节点数据
-            local node_count=$(echo "$nodes_json_array" | jq 'length')
-            if [[ "$node_count" -eq 0 ]]; then
-                echo ""
-                print_error "没有找到可用的节点"
-                echo ""
-                echo -e "${YELLOW}可能的原因：${NC}"
-                echo "  1. 用户未绑定任何节点"
-                echo "  2. 节点数据文件不存在或为空"
-                echo "  3. 节点端口匹配失败"
-                echo ""
-                echo -e "${CYAN}建议操作：${NC}"
-                echo "  1. 检查用户绑定的节点: ${NODES_FILE}"
-                echo "  2. 确认节点端口是否正确"
-                echo "  3. 先为用户绑定节点，再生成订阅"
-                echo ""
-                return 1
-            fi
-
-            # 生成 sing-box 配置（分离stdout和stderr）
-            local singbox_stderr_file=$(mktemp)
-            local singbox_output=$(generate_singbox_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>"$singbox_stderr_file")
-            local singbox_exit_code=$?
-
-            if [[ $singbox_exit_code -ne 0 ]]; then
-                echo ""
-                print_error "sing-box配置生成失败"
-                echo ""
-                echo -e "${YELLOW}详细信息：${NC}"
-                cat "$singbox_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /'
-                echo ""
-                echo -e "${CYAN}提示：${NC}"
-                echo "  1. Reality 节点需要 public_key 字段"
-                echo "  2. Trojan/SS 节点需要 password 字段"
-                echo "  3. 检查节点数据结构是否完整"
-                echo "  4. 可以尝试使用【通用订阅】或【原始订阅】格式"
-                echo ""
-                rm -f "$singbox_stderr_file"
-                return 1
-            fi
-
-            # 验证生成的配置是否有效
-            if [[ -z "$singbox_output" ]]; then
-                echo ""
-                print_error "sing-box配置生成为空"
-                echo ""
-                echo -e "${YELLOW}详细信息：${NC}"
-                cat "$singbox_stderr_file" | sed 's/^# /  /'
-                echo ""
-                rm -f "$singbox_stderr_file"
-                return 1
-            fi
-
-            # 配置有效，直接使用
-            sub_content="$singbox_output"
-
-            # 清理临时文件
-            rm -f "$singbox_stderr_file"
-            # 文件名格式: {name}_{user_id}_singbox.json
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_singbox.json"
             ;;
     esac
 
@@ -1925,13 +1285,7 @@ generate_subscription_with_user() {
 
     read -p "请输入订阅访问域名或IP [留空使用服务器IP]: " sub_domain
     if [[ -z "$sub_domain" ]]; then
-        sub_domain=$(get_subscription_domain_hint)
-    fi
-    if [[ -z "$sub_domain" ]]; then
         sub_domain=$(get_public_ip)
-    fi
-    if [[ -z "$sub_domain" ]]; then
-        sub_domain="127.0.0.1"
     fi
 
     read -p "请输入订阅端口 [默认: 8080]: " sub_port
@@ -2017,7 +1371,6 @@ get_sub_type_name() {
         1|general) echo "通用订阅 (Base64)" ;;
         2|raw) echo "原始订阅 (纯文本)" ;;
         3|clash) echo "Clash订阅 (YAML)" ;;
-        4|singbox) echo "sing-box订阅 (JSON)" ;;
         *) echo "未知类型" ;;
     esac
 }
@@ -2136,6 +1489,8 @@ show_subscription() {
         printf "%-4s %-20s %-15s %-12s %-15s %-15s\n" "$index" "$name" "$user" "$type_name" "$expire_display" "$traffic_display"
         ((index++))
     done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
+
+    echo ""
 }
 
 # 查看订阅链接(显示实际访问URL)
@@ -2160,11 +1515,8 @@ show_subscription_links() {
     fi
 
     # 获取服务器IP
-    local server_host=$(get_subscription_domain_hint)
-    if [[ -z "$server_host" ]]; then
-        server_host=$(get_public_ip)
-    fi
-    if [[ -z "$server_host" ]]; then
+    local server_ip=$(get_public_ip)
+    if [[ -z "$server_ip" ]]; then
         print_error "无法获取服务器IP"
         return 1
     fi
@@ -2197,22 +1549,19 @@ show_subscription_links() {
         # 获取订阅端口
         local sub_port=$(cat "${DATA_DIR}/sub_port.txt" 2>/dev/null || echo "8080")
 
-        # 使用实际文件构建访问URL
-        local sub_file_path=$(echo "$sub" | jq -r '.file // empty')
-        local resolved_file=""
-        if [[ -n "$sub_file_path" && -f "$sub_file_path" ]]; then
-            resolved_file="$sub_file_path"
-        else
-            resolved_file=$(find_subscription_file "$name" 2>/dev/null)
-        fi
-
+        # 构建访问URL (使用/sub/路径，与订阅服务器一致)
         local access_url=""
-        if [[ -n "$resolved_file" && -f "$resolved_file" ]]; then
-            local filename=$(basename "$resolved_file")
-            access_url="http://${server_host}:${sub_port}/sub/${filename}"
-        elif [[ -n "$url" ]]; then
-            access_url="$url"
-        fi
+        case "$type" in
+            general|1)
+                access_url="http://${server_ip}:${sub_port}/sub/${name}.txt"
+                ;;
+            raw|2)
+                access_url="http://${server_ip}:${sub_port}/sub/${name}_raw.txt"
+                ;;
+            clash|3)
+                access_url="http://${server_ip}:${sub_port}/sub/${name}_clash.yaml"
+                ;;
+        esac
 
         echo -e "${YELLOW}[$index] $name${NC} (用户: ${CYAN}$username${NC})"
         if [[ -n "$access_url" ]]; then
@@ -2352,104 +1701,23 @@ regenerate_subscription() {
 
         "clash")
             # Clash YAML格式
-            # 获取用户绑定的节点（使用统一函数）
+            # 获取用户绑定的节点
             local user_node_ports=()
             if [[ -n "$user_id" ]]; then
-                get_user_bound_ports "$user_id"
-            else
-                # 没有绑定用户，使用所有节点
-                while IFS= read -r node; do
-                    user_node_ports+=($(echo "$node" | jq -r '.port'))
-                done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+                while IFS= read -r port; do
+                    [[ -n "$port" ]] && user_node_ports+=("$port")
+                done < <(jq -r ".bindings[] | select(.users[] == \"$user_id\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
             fi
 
             # 收集节点JSON数组
             local nodes_json_array="[]"
-            for port in "${user_node_ports[@]}"; do
-                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
-                if [[ -n "$node" && "$node" != "null" ]]; then
-                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
-                fi
-            done
-
-            # 验证是否有节点数据
-            local node_count=$(echo "$nodes_json_array" | jq 'length')
-            if [[ "$node_count" -eq 0 ]]; then
-                print_error "没有找到可用的节点"
-                echo ""
-                echo -e "${YELLOW}可能的原因：${NC}"
-                echo "  1. 用户未绑定任何节点"
-                echo "  2. 节点数据文件不存在或为空"
-                echo "  3. 节点端口匹配失败"
-                echo ""
-                return 1
-            fi
-
-            # 获取用户密码（用于 Trojan/SS）
-            local user_password=""
-            if [[ -n "$user_id" ]]; then
-                user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
-            fi
-
-            # 生成 Clash 配置（使用与新生成订阅相同的错误处理逻辑）
-            local clash_stderr_file=$(mktemp)
-            local clash_output=$(generate_clash_config "$nodes_json_array" "$user_id" "$user_password" 2>"$clash_stderr_file")
-            local clash_exit_code=$?
-
-            if [[ $clash_exit_code -ne 0 ]]; then
-                print_error "Clash配置生成失败"
-                echo ""
-                echo -e "${YELLOW}详细信息：${NC}"
-                cat "$clash_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /'
-                echo ""
-                rm -f "$clash_stderr_file"
-                return 1
-            fi
-
-            # 验证生成的配置是否有效
-            if [[ -z "$clash_output" ]]; then
-                print_error "Clash配置生成为空"
-                echo ""
-                echo -e "${YELLOW}详细信息：${NC}"
-                cat "$clash_stderr_file" | sed 's/^# /  /'
-                echo ""
-                rm -f "$clash_stderr_file"
-                return 1
-            fi
-
-            # 保存配置到文件
-            echo "$clash_output" > "$sub_file"
-
-            # 清理临时文件
-            rm -f "$clash_stderr_file"
-            ;;
-
-        "singbox")
-            # sing-box JSON 格式
-            local nodes_json_array="[]"
-            if [[ -n "$user_id" ]]; then
-                # 获取用户绑定的节点
-                local user_node_ports=()
-                get_user_bound_ports "$user_id"
-
+            if [[ ${#user_node_ports[@]} -gt 0 ]]; then
                 for port in "${user_node_ports[@]}"; do
                     local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
                     if [[ -n "$node" && "$node" != "null" ]]; then
                         nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
                     fi
                 done
-            else
-                # 没有绑定用户，使用所有节点
-                while IFS= read -r node; do
-                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
-                done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
-            fi
-
-            # 验证节点数据
-            local node_count=$(echo "$nodes_json_array" | jq 'length')
-            if [[ "$node_count" -eq 0 ]]; then
-                print_error "没有可用的节点"
-                return 1
             fi
 
             # 获取用户密码（用于 Trojan/SS）
@@ -2458,23 +1726,8 @@ regenerate_subscription() {
                 user_password=$(jq -r ".users[] | select(.id == \"$user_id\") | .password // \"\"" "$USERS_FILE" 2>/dev/null)
             fi
 
-            # 生成 sing-box 配置
-            local singbox_stderr_file=$(mktemp)
-            local singbox_output=$(generate_singbox_config "$nodes_json_array" "$user_id" "$user_password" 2>"$singbox_stderr_file")
-            local singbox_exit_code=$?
-
-            if [[ $singbox_exit_code -ne 0 ]] || [[ -z "$singbox_output" ]]; then
-                print_error "sing-box配置生成失败"
-                cat "$singbox_stderr_file" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /'
-                rm -f "$singbox_stderr_file"
-                return 1
-            fi
-
-            # 保存配置到文件
-            echo "$singbox_output" > "$sub_file"
-
-            # 清理临时文件
-            rm -f "$singbox_stderr_file"
+            # 生成 Clash 配置
+            generate_clash_config "$nodes_json_array" "$user_id" "$user_password" > "$sub_file"
             ;;
 
         "raw")
@@ -2494,13 +1747,7 @@ regenerate_subscription() {
 
     # 更新订阅信息（更新时间、文件路径和URL）
     local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-    local server_ip=$(get_subscription_domain_hint)
-    if [[ -z "$server_ip" ]]; then
-        server_ip=$(get_public_ip)
-    fi
-    if [[ -z "$server_ip" ]]; then
-        server_ip="127.0.0.1"
-    fi
+    local server_ip=$(get_public_ip)
     local sub_filename=$(basename "$sub_file")
     local sub_url="http://${server_ip}:${port}/sub/${sub_filename}"
 
@@ -2674,23 +1921,10 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
 
             if os.path.exists(filepath):
                 self.send_response(200)
-
-                # 根据文件扩展名设置正确的Content-Type
-                if filename.endswith('.yaml') or filename.endswith('.yml'):
-                    content_type = 'text/yaml; charset=utf-8'
-                elif filename.endswith('.json'):
-                    content_type = 'application/json; charset=utf-8'
-                else:
-                    content_type = 'text/plain; charset=utf-8'
-
-                self.send_header('Content-Type', content_type)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
                 self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Cache-Control', 'no-cache')
-
-                # 获取文件大小并发送Content-Length
-                file_size = os.path.getsize(filepath)
-                self.send_header('Content-Length', str(file_size))
 
                 # 添加订阅用户信息头
                 user_id = self.get_user_info_from_filename(filename)
@@ -2702,14 +1936,8 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
 
                 self.end_headers()
 
-                # 分块读取文件，避免大文件内存问题和超时
                 with open(filepath, 'rb') as f:
-                    chunk_size = 8192
-                    while True:
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
+                    self.wfile.write(f.read())
             else:
                 self.send_error(404, 'Subscription not found')
         else:
@@ -2720,7 +1948,6 @@ class SubscriptionHandler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     try:
-        socketserver.TCPServer.allow_reuse_address = True
         with socketserver.TCPServer(("", PORT), SubscriptionHandler) as httpd:
             print(f"[订阅服务] 运行在端口 {PORT}")
             print(f"[订阅服务] 文件目录: {DIRECTORY}")
@@ -2764,13 +1991,9 @@ save_subscription_info() {
 
     if [[ -n "$exists" ]]; then
         # 更新现有订阅
-        if ! jq --arg name "$name" --arg url "$url" --arg file "$file" --arg type "$type" --arg user "$user" \
+        jq --arg name "$name" --arg url "$url" --arg file "$file" --arg type "$type" --arg user "$user" \
            '.subscriptions = [.subscriptions[] | if .name == $name then {name: $name, url: $url, file: $file, type: $type, user: $user, updated: now|todate} else . end]' \
-           "$sub_db" > "${sub_db}.tmp"; then
-            print_error "更新订阅信息失败"
-            rm -f "${sub_db}.tmp"
-            return 1
-        fi
+           "$sub_db" > "${sub_db}.tmp"
     else
         # 添加新订阅
         local sub_data=$(jq -n \
@@ -2781,11 +2004,7 @@ save_subscription_info() {
             --arg user "$user" \
             '{name: $name, url: $url, file: $file, type: $type, user: $user, created: now|todate}')
 
-        if ! jq ".subscriptions += [$sub_data]" "$sub_db" > "${sub_db}.tmp"; then
-            print_error "添加订阅信息失败"
-            rm -f "${sub_db}.tmp"
-            return 1
-        fi
+        jq ".subscriptions += [$sub_data]" "$sub_db" > "${sub_db}.tmp"
     fi
 
     mv "${sub_db}.tmp" "$sub_db"
@@ -2801,11 +2020,7 @@ remove_subscription_info() {
     fi
 
     # 使用--arg传递参数，避免特殊字符问题
-    if ! jq --arg name "$name" '.subscriptions = [.subscriptions[] | select(.name != $name)]' "$sub_db" > "${sub_db}.tmp"; then
-        print_error "删除订阅信息失败"
-        rm -f "${sub_db}.tmp"
-        return 1
-    fi
+    jq --arg name "$name" '.subscriptions = [.subscriptions[] | select(.name != $name)]' "$sub_db" > "${sub_db}.tmp" && \
     mv "${sub_db}.tmp" "$sub_db"
 }
 
@@ -2820,11 +2035,7 @@ update_subscription_name() {
     fi
 
     # 更新订阅名称,保留其他信息
-    if ! jq ".subscriptions = [.subscriptions[] | if .name == \"$old_name\" then .name = \"$new_name\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"; then
-        print_error "更新订阅名称失败"
-        rm -f "${sub_db}.tmp"
-        return 1
-    fi
+    jq ".subscriptions = [.subscriptions[] | if .name == \"$old_name\" then .name = \"$new_name\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"
     mv "${sub_db}.tmp" "$sub_db"
 }
 
@@ -2839,222 +2050,11 @@ update_subscription_file() {
     fi
 
     # 更新文件路径
-    if ! jq ".subscriptions = [.subscriptions[] | if .name == \"$name\" then .file = \"$new_file\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"; then
-        print_error "更新订阅文件路径失败"
-        rm -f "${sub_db}.tmp"
-        return 1
-    fi
+    jq ".subscriptions = [.subscriptions[] | if .name == \"$name\" then .file = \"$new_file\" | .updated = (now|todate) else . end]" "$sub_db" > "${sub_db}.tmp"
     mv "${sub_db}.tmp" "$sub_db"
 }
 
 # 更新别名（兼容旧函数名）
 generate_subscription() {
     generate_subscription_with_user
-}
-
-# 更新指定用户的所有订阅内容
-# 参数: $1=用户ID
-update_user_subscriptions() {
-    local target_user_id="$1"
-
-    if [[ -z "$target_user_id" ]]; then
-        print_error "用户ID不能为空"
-        return 1
-    fi
-
-    # 获取用户信息
-    local user_info=$(jq -r ".users[] | select(.id == \"$target_user_id\")" "$USERS_FILE" 2>/dev/null)
-    if [[ -z "$user_info" || "$user_info" == "null" ]]; then
-        print_error "用户不存在 (ID: $target_user_id)"
-        return 1
-    fi
-
-    local username=$(echo "$user_info" | jq -r '.username // .email // "unknown"')
-    local user_password=$(echo "$user_info" | jq -r '.password // ""')
-
-    # 从元数据中查找该用户的所有订阅
-    if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
-        print_warning "用户 $username 没有订阅"
-        return 0
-    fi
-
-    local user_subscriptions=$(jq -c ".subscriptions[] | select(.user_id == \"$target_user_id\")" "$SUBSCRIPTION_META_FILE" 2>/dev/null)
-
-    if [[ -z "$user_subscriptions" ]]; then
-        print_warning "用户 $username 没有订阅"
-        return 0
-    fi
-
-    local updated_count=0
-    local failed_count=0
-
-    # 遍历用户的所有订阅
-    while IFS= read -r sub_meta; do
-        local sub_name=$(echo "$sub_meta" | jq -r '.name')
-        local sub_type=$(echo "$sub_meta" | jq -r '.type')
-
-        print_info "更新订阅: $sub_name (类型: $sub_type)"
-
-        # 调用核心更新逻辑
-        if regenerate_subscription_content "$sub_name" "$target_user_id" "$username" "$user_password" "$sub_type"; then
-            ((updated_count++))
-            print_success "✓ $sub_name"
-        else
-            ((failed_count++))
-            print_error "✗ $sub_name"
-        fi
-        echo ""
-    done <<< "$user_subscriptions"
-
-    echo -e "${CYAN}用户 $username 订阅更新完成${NC}"
-    echo -e "  成功: ${GREEN}$updated_count${NC}"
-    if [[ $failed_count -gt 0 ]]; then
-        echo -e "  失败: ${RED}$failed_count${NC}"
-    fi
-
-    return 0
-}
-
-# 重新生成订阅内容的核心逻辑（参考 generate_subscription_with_user）
-# 参数: $1=订阅名称, $2=用户ID, $3=用户名, $4=用户密码, $5=订阅类型
-regenerate_subscription_content() {
-    local sub_name="$1"
-    local sub_user_id="$2"
-    local sub_user_email="$3"
-    local sub_user_password="$4"
-    local sub_type="$5"
-
-    # 1. 获取用户绑定的节点列表
-    local user_node_ports=()
-    get_user_bound_ports "$sub_user_id"
-
-    if [[ ${#user_node_ports[@]} -eq 0 ]]; then
-        print_warning "用户未绑定节点，使用所有节点"
-        while IFS= read -r node; do
-            user_node_ports+=($(echo "$node" | jq -r '.port'))
-        done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
-    fi
-
-    if [[ ${#user_node_ports[@]} -eq 0 ]]; then
-        print_error "没有可用的节点"
-        return 1
-    fi
-
-    # 2. 根据订阅类型生成内容
-    local sub_content=""
-    local sub_file=""
-
-    case $sub_type in
-        general)
-            # 通用订阅 - Base64编码
-            local share_links=()
-            for port in "${user_node_ports[@]}"; do
-                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
-                if [[ -n "$node" && "$node" != "null" ]]; then
-                    local link=$(generate_share_link_smart "$sub_user_id" "$sub_user_email" "$node")
-                    [[ -n "$link" ]] && share_links+=("$link")
-                fi
-            done
-
-            [[ ${#share_links[@]} -eq 0 ]] && { print_error "没有可用节点"; return 1; }
-
-            local raw_links=""
-            for link in "${share_links[@]}"; do
-                [[ -n "$raw_links" ]] && raw_links="${raw_links}\n${link}" || raw_links="$link"
-            done
-            sub_content=$(echo -e "$raw_links" | base64 -w 0 2>/dev/null || echo -e "$raw_links" | base64 | tr -d '\n')
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_base64.txt"
-            ;;
-
-        raw)
-            # 原始订阅
-            local share_links=()
-            for port in "${user_node_ports[@]}"; do
-                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
-                if [[ -n "$node" && "$node" != "null" ]]; then
-                    local link=$(generate_share_link_smart "$sub_user_id" "$sub_user_email" "$node")
-                    [[ -n "$link" ]] && share_links+=("$link")
-                fi
-            done
-
-            [[ ${#share_links[@]} -eq 0 ]] && { print_error "没有可用节点"; return 1; }
-
-            sub_content=$(printf "%s\n" "${share_links[@]}")
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_raw.txt"
-            ;;
-
-        clash)
-            # Clash订阅
-            local nodes_json_array="[]"
-            for port in "${user_node_ports[@]}"; do
-                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
-                [[ -n "$node" && "$node" != "null" ]] && \
-                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
-            done
-
-            local node_count=$(echo "$nodes_json_array" | jq 'length')
-            [[ "$node_count" -eq 0 ]] && { print_error "没有可用节点"; return 1; }
-
-            local clash_stderr=$(mktemp)
-            sub_content=$(generate_clash_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>"$clash_stderr")
-
-            if [[ $? -ne 0 ]] || [[ -z "$sub_content" ]]; then
-                print_error "Clash配置生成失败"
-                cat "$clash_stderr" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /' >&2
-                rm -f "$clash_stderr"
-                return 1
-            fi
-            rm -f "$clash_stderr"
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_clash.yaml"
-            ;;
-
-        singbox)
-            # sing-box订阅
-            local nodes_json_array="[]"
-            for port in "${user_node_ports[@]}"; do
-                local node=$(jq -c ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
-                [[ -n "$node" && "$node" != "null" ]] && \
-                    nodes_json_array=$(echo "$nodes_json_array" | jq --argjson node "$node" '. += [$node]')
-            done
-
-            local node_count=$(echo "$nodes_json_array" | jq 'length')
-            [[ "$node_count" -eq 0 ]] && { print_error "没有可用节点"; return 1; }
-
-            local singbox_stderr=$(mktemp)
-            sub_content=$(generate_singbox_config "$nodes_json_array" "$sub_user_id" "$sub_user_password" 2>"$singbox_stderr")
-
-            if [[ $? -ne 0 ]] || [[ -z "$sub_content" ]]; then
-                print_error "sing-box配置生成失败"
-                cat "$singbox_stderr" | grep -E "^# (ERROR|WARNING)" | sed 's/^# /  /' >&2
-                rm -f "$singbox_stderr"
-                return 1
-            fi
-            rm -f "$singbox_stderr"
-            sub_file="${SUBSCRIPTION_DIR}/${sub_name}_${sub_user_id}_singbox.json"
-            ;;
-
-        *)
-            print_error "未知订阅类型: $sub_type"
-            return 1
-            ;;
-    esac
-
-    # 3. 保存订阅文件
-    echo "$sub_content" > "$sub_file"
-
-    # 4. 更新数据库中的URL和时间戳
-    local port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-    local server_ip=$(get_subscription_domain_hint)
-    [[ -z "$server_ip" ]] && server_ip=$(get_public_ip)
-    [[ -z "$server_ip" ]] && server_ip="127.0.0.1"
-
-    local sub_filename=$(basename "$sub_file")
-    local sub_url="http://${server_ip}:${port}/sub/${sub_filename}"
-
-    local sub_db="${DATA_DIR}/subscriptions.json"
-    jq --arg name "$sub_name" --arg url "$sub_url" --arg file "$sub_file" \
-       '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, file: $file, updated: (now|todate)})' \
-       "$sub_db" > "${sub_db}.tmp" && mv "${sub_db}.tmp" "$sub_db"
-
-    return 0
 }

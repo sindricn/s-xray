@@ -7,12 +7,6 @@
 # 优化：出站规则统一修改、绑定到节点的逻辑
 #================================================================
 
-# 避免重复加载导致只读变量冲突
-if [[ -n "${OUTBOUND_MODULE_LOADED:-}" ]]; then
-    return 0
-fi
-OUTBOUND_MODULE_LOADED=1
-
 # 全局变量
 OUTBOUND_FILE="${DATA_DIR}/outbounds.json"
 

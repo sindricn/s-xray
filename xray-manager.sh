@@ -85,13 +85,15 @@ init_data_dir() {
     mkdir -p "$DATA_DIR"
     mkdir -p "$SUBSCRIPTION_DIR"
 
-    # 核心数据文件初始化，缺失时写入空结构
-    ensure_json_file "$USERS_FILE" '{"users":[]}'
-    ensure_json_file "$NODES_FILE" '{"nodes":[]}'
-    ensure_json_file "$NODE_USERS_FILE" '{"bindings":[]}'
-    ensure_json_file "${DATA_DIR}/subscriptions.json" '{"subscriptions":[]}'
-    ensure_json_file "${DATA_DIR}/subscription_metadata.json" '{"subscriptions":[]}'
-    ensure_json_file "${DATA_DIR}/outbounds.json" '{"outbounds":[]}'
+    # 初始化用户文件
+    if [[ ! -f "$USERS_FILE" ]]; then
+        echo '{"users":[]}' > "$USERS_FILE"
+    fi
+
+    # 初始化节点文件
+    if [[ ! -f "$NODES_FILE" ]]; then
+        echo '{"nodes":[]}' > "$NODES_FILE"
+    fi
 }
 
 # 获取 Xray 状态信息
@@ -171,27 +173,17 @@ show_menu() {
     # 获取节点数量
     local node_count=0
     if [[ -f "$NODES_FILE" ]]; then
-        node_count=$(jq -r '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "")
-        if [[ -z "$node_count" || ! "$node_count" =~ ^[0-9]+$ ]]; then
-            node_count=0
-        fi
+        node_count=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "0")
     fi
 
     # 获取用户数量
     local user_count=0
     if [[ -f "$USERS_FILE" ]]; then
-        user_count=$(jq -r '.users | length' "$USERS_FILE" 2>/dev/null || echo "")
-        if [[ -z "$user_count" || ! "$user_count" =~ ^[0-9]+$ ]]; then
-            user_count=0
-        fi
+        user_count=$(jq '.users | length' "$USERS_FILE" 2>/dev/null || echo "0")
     fi
 
     # 获取在线用户数量
-    local online_count="$(get_online_users_count 2>/dev/null)"
-    online_count="${online_count%%$'\n'*}"
-    if [[ -z "$online_count" || ! "$online_count" =~ ^[0-9]+$ ]]; then
-        online_count=0
-    fi
+    local online_count=$(get_online_users_count)
 
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.2    ║${NC}"
@@ -537,20 +529,13 @@ delete_node_smart() {
 
     for port in "${ports_to_delete[@]}"; do
         # 删除节点
-        if ! update_json_file ".nodes |= map(select(.port != \"$port\"))" "$NODES_FILE"; then
-            print_error "删除节点失败: $port"
-            ((fail_count++))
-            continue
-        fi
+        jq ".nodes |= map(select(.port != \"$port\"))" "$NODES_FILE" > "${NODES_FILE}.tmp"
+        mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
         # 删除绑定关系
         if [[ -f "$NODE_USERS_FILE" ]]; then
-            if ! update_json_file ".bindings |= map(select(.port != \"$port\"))" "$NODE_USERS_FILE"; then
-                print_error "删除节点绑定失败: $port"
-                ((fail_count++))
-                # 尝试回滚节点文件（不易实现），继续处理其他节点
-                continue
-            fi
+            jq ".bindings |= map(select(.port != \"$port\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         fi
 
         # 从配置中移除
@@ -614,10 +599,8 @@ modify_node_config_direct() {
                 echo -e "${YELLOW}当前名称: $current_name${NC}"
                 read -p "请输入新的节点名称: " new_name
                 if [[ -n "$new_name" ]]; then
-                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .name = \"$new_name\" else . end)" "$NODES_FILE"; then
-                        print_error "节点名称更新失败"
-                        continue
-                    fi
+                    jq ".nodes |= map(if .port == \"$port\" then .name = \"$new_name\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
                     print_success "节点名称已修改为: $new_name"
                     # 重新加载节点信息
                     node=$(jq -r ".nodes[] | select(.port == \"$port\")" "$NODES_FILE" 2>/dev/null)
@@ -635,17 +618,13 @@ modify_node_config_direct() {
                     fi
 
                     # 更新节点信息
-                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE"; then
-                        print_error "更新节点端口失败"
-                        continue
-                    fi
+                    jq ".nodes |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
                     # 更新绑定信息
                     if [[ -f "$NODE_USERS_FILE" ]]; then
-                        if ! update_json_file ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE"; then
-                            print_error "更新节点绑定信息失败"
-                            continue
-                        fi
+                        jq ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
                     fi
 
                     # 更新配置文件
@@ -697,10 +676,8 @@ modify_node_config_direct() {
                                 print_success "域名测试通过"
 
                                 # 更新节点extra字段
-                                if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE"; then
-                                    print_error "更新伪装域名失败"
-                                    continue
-                                fi
+                                jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                                mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
                                 # 重新生成配置
                                 generate_xray_config
@@ -714,10 +691,8 @@ modify_node_config_direct() {
                                 print_warning "域名测试失败，但仍可继续使用"
                                 read -p "是否仍要使用此域名? [y/N]: " confirm
                                 if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-                                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE"; then
-                                        print_error "更新伪装域名失败"
-                                        continue
-                                    fi
+                                    jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$new_domain:443\" | .extra.server_names = [\"$new_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
                                     generate_xray_config
                                     restart_xray
                                     print_success "伪装域名已更新为: $new_domain"
@@ -764,10 +739,8 @@ modify_node_config_direct() {
                                 print_success "优选完成！最佳域名: $best_domain (${best_latency}ms)"
 
                                 # 更新节点
-                                if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$best_domain:443\" | .extra.server_names = [\"$best_domain\"] else . end)" "$NODES_FILE"; then
-                                    print_error "更新伪装域名失败"
-                                    continue
-                                fi
+                                jq ".nodes |= map(if .port == \"$port\" then .extra.dest = \"$best_domain:443\" | .extra.server_names = [\"$best_domain\"] else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                                mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
                                 generate_xray_config
                                 restart_xray
@@ -838,10 +811,8 @@ modify_node_config_direct() {
                     echo ""
 
                     # 更新节点extra字段
-                    if ! update_json_file ".nodes |= map(if .port == \"$port\" then .extra.private_key = \"$private_key\" | .extra.public_key = \"$public_key\" else . end)" "$NODES_FILE"; then
-                        print_error "更新节点密钥失败"
-                        continue
-                    fi
+                    jq ".nodes |= map(if .port == \"$port\" then .extra.private_key = \"$private_key\" | .extra.public_key = \"$public_key\" else . end)" "$NODES_FILE" > "${NODES_FILE}.tmp"
+                    mv "${NODES_FILE}.tmp" "$NODES_FILE"
 
                     # 重新生成配置
                     generate_xray_config
@@ -1081,10 +1052,9 @@ modify_user_traffic_and_expire() {
     esac
 
     # 更新用户信息
-    if ! update_json_file ".users |= map(if .username == \"$username\" then .traffic_limit_gb = \"$new_traffic_limit\" | .expire_date = \"$new_expire\" else . end)" "$USERS_FILE"; then
-        print_error "更新用户流量/有效期失败"
-        return 1
-    fi
+    jq ".users |= map(if .username == \"$username\" then .traffic_limit_gb = \"$new_traffic_limit\" | .expire_date = \"$new_expire\" else . end)" \
+        "$USERS_FILE" > "${USERS_FILE}.tmp"
+    mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     echo ""
     print_success "流量与有效期修改成功"
@@ -1140,19 +1110,13 @@ delete_user_smart() {
 
         # 从绑定关系中移除该用户
         if [[ -f "$NODE_USERS_FILE" ]]; then
-            if ! update_json_file '.bindings |= map(.users |= map(select(. != $uuid)))' --arg uuid "$uuid" "$NODE_USERS_FILE"; then
-                print_error "移除用户绑定失败: $username"
-                ((fail_count++))
-                continue
-            fi
+            jq "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+            mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
         fi
 
         # 从用户文件中删除
-        if ! update_json_file ".users |= map(select(.username != \"$username\"))" "$USERS_FILE"; then
-            print_error "删除用户数据失败: $username"
-            ((fail_count++))
-            continue
-        fi
+        jq ".users |= map(select(.username != \"$username\"))" "$USERS_FILE" > "${USERS_FILE}.tmp"
+        mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
         print_success "已删除用户: $username"
         ((success_count++))
@@ -1259,10 +1223,8 @@ modify_user_info_direct() {
             # 同步更新绑定关系中的UUID
             if [[ -f "$NODE_USERS_FILE" ]]; then
                 local old_uuid=$(echo "$user_info" | jq -r '.id')
-                if ! update_json_file '.bindings |= map(.users |= map(if . == $old_uuid then $new_uuid else . end))' --arg old_uuid "$old_uuid" --arg new_uuid "$new_uuid" "$NODE_USERS_FILE"; then
-                    print_error "更新绑定关系UUID失败"
-                    return 1
-                fi
+                jq "(.bindings[].users) |= map(if . == \"$old_uuid\" then \"$new_uuid\" else . end)" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"
+                mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
             fi
 
             print_success "UUID 重置成功"
@@ -1307,158 +1269,24 @@ menu_subscription() {
         echo -e "${GREEN}1.${NC} 查看节点链接"
         echo -e "${GREEN}2.${NC} 生成订阅链接"
         echo -e "${GREEN}3.${NC} 查看订阅链接"
-        echo -e "${GREEN}4.${NC} 更新订阅内容"
-        echo -e "${GREEN}5.${NC} 修改订阅配置"
-        echo -e "${GREEN}6.${NC} 删除订阅"
+        echo -e "${GREEN}4.${NC} 修改订阅配置"
+        echo -e "${GREEN}5.${NC} 删除订阅"
         echo -e "${GREEN}0.${NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-6]: " choice
+        read -p "请选择操作 [0-5]: " choice
 
         case $choice in
             1) show_node_share_link ;;  # 查看单个节点链接
             2) generate_subscription_with_user ;;  # 生成订阅链接（支持用户绑定）
             3) show_subscription_links ;;      # 查看所有订阅链接
-            4) update_subscription_content_menu ;;  # 更新订阅内容
-            5) modify_subscription_menu ;;  # 修改订阅配置
-            6) delete_subscription_smart ;;  # 智能删除订阅（支持批量）
+            4) modify_subscription_menu ;;  # 修改订阅配置
+            5) delete_subscription_smart ;;  # 智能删除订阅（支持批量）
             0) break ;;
             *) print_error "无效选择" ;;
         esac
 
         read -p "按 Enter 键继续..."
     done
-}
-
-# 更新订阅内容菜单
-update_subscription_content_menu() {
-    clear
-    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║      更新订阅内容                    ║${NC}"
-    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e "${YELLOW}适用场景：${NC}"
-    echo -e "  - 节点参数变更（端口、密码、协议配置等）"
-    echo -e "  - 用户绑定的节点发生变化"
-    echo -e "  - 需要同步最新的节点信息到订阅"
-    echo ""
-
-    echo -e "${GREEN}1.${NC} 更新所有用户订阅"
-    echo -e "${GREEN}2.${NC} 更新单个用户订阅"
-    echo -e "${GREEN}0.${NC} 返回"
-    echo ""
-    read -p "请选择操作 [0-2]: " choice
-
-    case $choice in
-        1)
-            # 更新所有用户订阅
-            echo ""
-            print_info "开始更新所有用户订阅..."
-            echo ""
-
-            if [[ ! -f "$SUBSCRIPTION_META_FILE" ]]; then
-                print_error "订阅元数据文件不存在"
-                return 1
-            fi
-
-            # 获取所有有订阅的用户ID（去重）
-            local all_user_ids=$(jq -r '.subscriptions[].user_id' "$SUBSCRIPTION_META_FILE" 2>/dev/null | sort -u)
-
-            if [[ -z "$all_user_ids" ]]; then
-                print_warning "没有找到任何订阅"
-                return 0
-            fi
-
-            local total_users=$(echo "$all_user_ids" | wc -l)
-            print_info "找到 $total_users 个用户有订阅"
-            echo ""
-
-            local user_count=0
-            while IFS= read -r user_id; do
-                [[ -z "$user_id" ]] && continue
-                ((user_count++))
-
-                local username=$(jq -r ".users[] | select(.id == \"$user_id\") | .username // .email // \"未知用户\"" "$USERS_FILE" 2>/dev/null)
-                echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${YELLOW}[$user_count/$total_users] 用户: $username${NC}"
-                echo ""
-
-                update_user_subscriptions "$user_id"
-                echo ""
-            done <<< "$all_user_ids"
-
-            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            print_success "所有用户订阅更新完成！"
-            ;;
-
-        2)
-            # 更新单个用户订阅
-            echo ""
-            print_info "选择要更新订阅的用户"
-            echo ""
-
-            if [[ ! -f "$USERS_FILE" ]]; then
-                print_error "用户文件不存在"
-                return 1
-            fi
-
-            local user_count=$(jq -r '.users | length' "$USERS_FILE" 2>/dev/null)
-            if [[ -z "$user_count" || "$user_count" -eq 0 ]]; then
-                print_error "没有可用用户"
-                return 1
-            fi
-
-            # 显示用户列表
-            echo -e "${YELLOW}用户列表：${NC}"
-            local index=1
-            while IFS= read -r user; do
-                [[ -z "$user" || "$user" == "null" ]] && continue
-
-                local uid=$(echo "$user" | jq -r '.id')
-                local uname=$(echo "$user" | jq -r '.username // .email // "unknown"')
-
-                # 统计该用户的订阅数
-                local sub_count=0
-                if [[ -f "$SUBSCRIPTION_META_FILE" ]]; then
-                    sub_count=$(jq -r ".subscriptions[] | select(.user_id == \"$uid\") | .name" "$SUBSCRIPTION_META_FILE" 2>/dev/null | wc -l)
-                fi
-
-                printf "${CYAN}[%d]${NC} ${YELLOW}%s${NC} - UUID: %s - 订阅数: %d\n" "$index" "$uname" "${uid:0:16}..." "$sub_count"
-                ((index++))
-            done < <(jq -c '.users[]' "$USERS_FILE" 2>/dev/null)
-
-            echo ""
-            read -p "请输入用户序号: " user_index
-
-            # 验证输入
-            if [[ ! "$user_index" =~ ^[0-9]+$ ]] || [[ "$user_index" -lt 1 ]] || [[ "$user_index" -gt "$((index-1))" ]]; then
-                print_error "无效的序号"
-                return 1
-            fi
-
-            local user=$(jq -c ".users[$((user_index-1))]" "$USERS_FILE" 2>/dev/null)
-            if [[ -z "$user" || "$user" == "null" ]]; then
-                print_error "用户不存在"
-                return 1
-            fi
-
-            local user_id=$(echo "$user" | jq -r '.id')
-            local username=$(echo "$user" | jq -r '.username // .email // "unknown"')
-
-            echo ""
-            print_info "正在更新用户 $username 的所有订阅..."
-            echo ""
-
-            update_user_subscriptions "$user_id"
-            ;;
-
-        0)
-            return 0
-            ;;
-
-        *)
-            print_error "无效选择"
-            ;;
-    esac
 }
 
 # 修改订阅配置菜单
@@ -1497,7 +1325,7 @@ modify_subscription_menu() {
         echo ""
 
         echo -e "${GREEN}1.${NC} 修改订阅名称"
-        echo -e "${GREEN}2.${NC} 修改订阅端口"
+        echo -e "${GREEN}2.${NC} 重新生成订阅内容"
         echo -e "${GREEN}0.${NC} 返回"
         echo ""
         echo -e "${YELLOW}提示：流量和有效期请在用户管理中修改${NC}"
@@ -1560,64 +1388,14 @@ modify_subscription_menu() {
                 fi
                 ;;
             2)
-                # 修改订阅端口
+                # 重新生成订阅内容
                 echo ""
-                local current_port=$(cat "${DATA_DIR}/subscription_port.txt" 2>/dev/null || echo "8080")
-                echo -e "${YELLOW}当前端口:${NC} $current_port"
-                echo ""
-                read -p "请输入新的订阅端口 [1-65535]: " new_port
-
-                if [[ -z "$new_port" ]]; then
-                    print_warning "已取消"
-                    continue
+                print_info "重新生成订阅内容..."
+                if regenerate_subscription "$sub_name"; then
+                    print_success "订阅内容已更新"
+                else
+                    print_error "订阅更新失败"
                 fi
-
-                if [[ ! "$new_port" =~ ^[0-9]+$ ]]; then
-                    print_error "端口必须是数字"
-                    continue
-                fi
-
-                if [[ $new_port -lt 1 || $new_port -gt 65535 ]]; then
-                    print_error "端口范围必须在 1-65535 之间"
-                    continue
-                fi
-
-                # 保存新端口
-                echo "$new_port" > "${DATA_DIR}/subscription_port.txt"
-
-                # 重启订阅服务
-                setup_subscription_server "$new_port"
-
-                # 更新所有订阅链接
-                local sub_db="${DATA_DIR}/subscriptions.json"
-                if [[ -f "$sub_db" ]]; then
-                    local server_ip=$(get_subscription_domain_hint)
-                    if [[ -z "$server_ip" ]]; then
-                        server_ip=$(get_public_ip)
-                    fi
-                    if [[ -z "$server_ip" ]]; then
-                        server_ip="127.0.0.1"
-                    fi
-
-                    while IFS= read -r sub_entry; do
-                        local name=$(echo "$sub_entry" | jq -r '.name')
-                        local file=$(echo "$sub_entry" | jq -r '.file')
-                        if [[ -f "$file" ]]; then
-                            local filename=$(basename "$file")
-                            local new_url="http://${server_ip}:${new_port}/sub/${filename}"
-
-                            if ! update_json_file --arg name "$name" --arg url "$new_url" \
-                                '(.subscriptions[] | select(.name == $name)) |= (. + {url: $url, updated: (now|todate)})' \
-                                "$sub_db"; then
-                                print_error "更新订阅链接失败: $name"
-                                continue
-                            fi
-                        fi
-                    done < <(jq -c '.subscriptions[]' "$sub_db" 2>/dev/null)
-                fi
-
-                print_success "订阅端口已修改为: $new_port"
-                print_success "所有订阅链接已自动更新"
                 ;;
             0)
                 return 0
@@ -1841,9 +1619,9 @@ menu_script() {
                 echo -e "${RED}╚═══════════════════════════════════════╝${NC}"
                 echo ""
                 echo -e "${YELLOW}即将进入卸载程序，提供以下选项：${NC}"
-                echo -e "  ${CYAN}1.${NC} 仅卸载管理脚本（保留 Xray 核心与配置）"
-                echo -e "  ${CYAN}2.${NC} 仅卸载 Xray 核心与配置文件（保留管理脚本）"
-                echo -e "  ${CYAN}3.${NC} 完全卸载（脚本、Xray、配置与依赖）"
+                echo -e "  ${CYAN}1.${NC} 仅卸载管理脚本（保留Xray核心和配置）"
+                echo -e "  ${CYAN}2.${NC} 卸载脚本和配置文件（保留Xray核心）"
+                echo -e "  ${CYAN}3.${NC} 完全卸载（包括Xray核心）"
                 echo ""
 
                 if confirm "确认进入卸载程序" "n"; then
@@ -1853,41 +1631,15 @@ menu_script() {
                     fi
                     local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
 
-                    local uninstall_script=""
                     if [[ -f "${script_dir}/uninstall.sh" ]]; then
-                        uninstall_script="${script_dir}/uninstall.sh"
+                        log_info "执行卸载脚本: ${script_dir}/uninstall.sh"
+                        exec bash "${script_dir}/uninstall.sh"
                     elif [[ -f "/opt/s-xray/uninstall.sh" ]]; then
-                        uninstall_script="/opt/s-xray/uninstall.sh"
-                    fi
-
-                    if [[ -n "$uninstall_script" ]]; then
-                        echo ""
-                        print_info "即将启动卸载程序..."
-                        echo ""
-
-                        # 直接调用卸载脚本，不使用exec（避免替换当前进程）
-                        if bash "$uninstall_script"; then
-                            # 卸载脚本正常完成
-                            echo ""
-                            print_info "卸载程序已退出"
-
-                            # 如果选择了完全卸载或卸载管理脚本，则退出主程序
-                            echo ""
-                            read -p "按 Enter 键退出..." -t 5
-                            exit 0
-                        else
-                            # 卸载脚本异常退出
-                            echo ""
-                            print_warning "卸载程序异常退出"
-                        fi
+                        log_info "执行卸载脚本: /opt/s-xray/uninstall.sh"
+                        exec bash "/opt/s-xray/uninstall.sh"
                     else
-                        print_error "未找到卸载脚本"
-                        echo ""
-                        echo -e "${YELLOW}可能的位置：${NC}"
-                        echo -e "  - ${script_dir}/uninstall.sh"
-                        echo -e "  - /opt/s-xray/uninstall.sh"
-                        echo ""
-                        print_info "请手动运行: bash <脚本路径>/uninstall.sh"
+                        log_error "未找到卸载脚本"
+                        log_info "请手动运行: bash /opt/s-xray/uninstall.sh"
                     fi
                 else
                     print_info "已取消卸载"
