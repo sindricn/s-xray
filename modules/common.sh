@@ -200,33 +200,47 @@ confirm() {
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
-# 确保 JSON 数据文件存在，不存在时写入默认内容
+# 确保 JSON 数据文件存在且格式正确，格式错误时重新初始化
 ensure_json_file() {
     local target_file="$1"
     local default_payload="${2:-{}}"
+    local need_init=false
 
-    # 已存在则直接返回
+    # 检查文件是否存在
     if [[ -f "$target_file" ]]; then
-        return 0
-    fi
-
-    local target_dir
-    target_dir="$(dirname "$target_file")"
-
-    # 确保所在目录存在
-    if [[ ! -d "$target_dir" ]]; then
-        if ! mkdir -p "$target_dir" 2>/dev/null; then
-            error_exit "无法创建数据目录: $target_dir"
+        # 验证JSON格式
+        if ! jq empty "$target_file" >/dev/null 2>&1; then
+            log_warning "JSON文件格式错误，将重新初始化: $target_file"
+            need_init=true
+        else
+            # 文件存在且格式正确
+            return 0
         fi
+    else
+        # 文件不存在
+        need_init=true
     fi
 
-    # 写入默认内容
-    if printf '%s\n' "$default_payload" > "$target_file"; then
-        log_debug "已初始化数据文件: $target_file"
-        return 0
-    fi
+    # 需要初始化
+    if [[ "$need_init" == "true" ]]; then
+        local target_dir
+        target_dir="$(dirname "$target_file")"
 
-    error_exit "无法初始化数据文件: $target_file"
+        # 确保所在目录存在
+        if [[ ! -d "$target_dir" ]]; then
+            if ! mkdir -p "$target_dir" 2>/dev/null; then
+                error_exit "无法创建数据目录: $target_dir"
+            fi
+        fi
+
+        # 写入默认内容
+        if printf '%s\n' "$default_payload" > "$target_file"; then
+            log_debug "已初始化数据文件: $target_file"
+            return 0
+        fi
+
+        error_exit "无法初始化数据文件: $target_file"
+    fi
 }
 
 # 验证 JSON 文件格式是否正确
