@@ -151,7 +151,7 @@ unbind_user_from_node() {
     fi
 
     # 解绑用户
-    if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+    if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
         print_error "解绑用户失败"
         rm -f "${NODE_USERS_FILE}.tmp"
         return 1
@@ -526,7 +526,7 @@ unbind_single_node_from_user() {
     fi
 
     # 移除绑定
-    if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+    if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
         print_error "移除绑定失败"
         rm -f "${NODE_USERS_FILE}.tmp"
         return 1
@@ -576,7 +576,7 @@ batch_unbind_nodes_from_user() {
 
     local success_count=0
     for port in $ports; do
-        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "从端口 $port 解绑失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             continue
@@ -861,7 +861,7 @@ unbind_single_user_from_node() {
     fi
 
     # 移除绑定
-    if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+    if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
         print_error "移除绑定失败"
         rm -f "${NODE_USERS_FILE}.tmp"
         return 1
@@ -922,7 +922,7 @@ batch_unbind_users_from_node() {
             continue
         fi
 
-        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "移除用户 $username 失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             continue
@@ -1253,7 +1253,7 @@ unbind_nodes_from_user_smart() {
         fi
 
         # 解绑操作
-        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "从节点 (端口 $port) 解绑失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             continue
@@ -1494,7 +1494,7 @@ unbind_users_from_node_smart() {
             continue
         fi
 
-        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "移除用户 $username 失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             continue

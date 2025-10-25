@@ -1140,7 +1140,7 @@ delete_user_smart() {
 
         # 从绑定关系中移除该用户
         if [[ -f "$NODE_USERS_FILE" ]]; then
-            if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
+            if ! update_json_file '.bindings |= map(.users |= map(select(. != $uuid)))' --arg uuid "$uuid" "$NODE_USERS_FILE"; then
                 print_error "移除用户绑定失败: $username"
                 ((fail_count++))
                 continue
@@ -1259,7 +1259,7 @@ modify_user_info_direct() {
             # 同步更新绑定关系中的UUID
             if [[ -f "$NODE_USERS_FILE" ]]; then
                 local old_uuid=$(echo "$user_info" | jq -r '.id')
-                if ! update_json_file "(.bindings[].users) |= map(if . == \"$old_uuid\" then \"$new_uuid\" else . end)" "$NODE_USERS_FILE"; then
+                if ! update_json_file '.bindings |= map(.users |= map(if . == $old_uuid then $new_uuid else . end))' --arg old_uuid "$old_uuid" --arg new_uuid "$new_uuid" "$NODE_USERS_FILE"; then
                     print_error "更新绑定关系UUID失败"
                     return 1
                 fi

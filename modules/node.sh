@@ -1252,7 +1252,7 @@ modify_node_config() {
                 if [[ -n "$username" ]]; then
                     local uuid=$(jq -r ".users[] | select(.username == \"$username\") | .id" "$USERS_FILE" 2>/dev/null)
                     if [[ -n "$uuid" ]]; then
-                        if ! update_json_file "(.bindings[] | select(.port == \"$port\") | .users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
+                        if ! update_json_file '.bindings |= map(if .port == $port then .users |= map(select(. != $uuid)) else . end)' --arg port "$port" --arg uuid "$uuid" "$NODE_USERS_FILE"; then
                             print_error "解绑用户失败"
                             return 1
                         fi
