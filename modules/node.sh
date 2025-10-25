@@ -85,11 +85,9 @@ bind_admin_to_node() {
             return 1
         fi
 
-        # 使用 --argjson 安全添加绑定（避免 shell 引号问题）
-        if ! update_json_file --argjson binding "$binding_data" '.bindings += [$binding]' "$NODE_USERS_FILE"; then
-            print_error "更新绑定信息失败"
-            return 1
-        fi
+        # 添加绑定
+        jq --argjson binding "$binding_data" '.bindings += [$binding]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp" && \
+        mv "${NODE_USERS_FILE}.tmp" "$NODE_USERS_FILE"
     fi
 
     # 返回admin用户信息（用于后续生成分享链接）
