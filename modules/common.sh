@@ -203,7 +203,12 @@ confirm() {
 # 确保 JSON 数据文件存在
 ensure_json_file() {
     local target_file="$1"
-    local default_payload="${2:-{}}"
+    local default_payload
+    if [[ -z "$2" ]]; then
+        default_payload="{}"
+    else
+        default_payload="$2"
+    fi
 
     # 已存在则直接返回
     if [[ -f "$target_file" ]]; then
@@ -251,7 +256,12 @@ validate_json_file() {
 # 安全修复损坏的 JSON 文件（备份后重新初始化）
 repair_json_file() {
     local file=$1
-    local default_content="${2:-{}}"
+    local default_content
+    if [[ -z "$2" ]]; then
+        default_content="{}"
+    else
+        default_content="$2"
+    fi
 
     if [[ ! -f "$file" ]]; then
         log_warn "文件不存在，将创建新文件: $file"
