@@ -931,7 +931,7 @@ delete_node() {
 
     # 1. 从节点绑定关系中删除该端口
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE"; then
+        if ! update_json_file --arg port "$port" '.bindings = [.bindings[] | select(.port != $port)]' "$NODE_USERS_FILE"; then
             print_error "清理节点绑定关系失败"
             return 1
         fi
@@ -1182,7 +1182,7 @@ modify_node_config() {
 
                 # 更新绑定信息
                 if [[ -f "$NODE_USERS_FILE" ]]; then
-                    if ! update_json_file ".bindings |= map(if .port == \"$port\" then .port = \"$new_port\" else . end)" "$NODE_USERS_FILE"; then
+                    if ! update_json_file --arg port "$port" --arg new_port "$new_port" '.bindings |= map(if .port == $port then .port = $new_port else . end)' "$NODE_USERS_FILE"; then
                         print_error "更新绑定端口失败"
                         return 1
                     fi
@@ -1216,12 +1216,12 @@ modify_node_config() {
                         local binding_exists=$(jq -r ".bindings[] | select(.port == \"$port\") | .port" "$NODE_USERS_FILE" 2>/dev/null)
                         if [[ -z "$binding_exists" ]]; then
                             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-                            if ! update_json_file ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE"; then
+                            if ! update_json_file --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE"; then
                                 print_error "添加绑定失败"
                                 return 1
                             fi
                         else
-                            if ! update_json_file "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE"; then
+                            if ! update_json_file --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE"; then
                                 print_error "更新用户绑定失败"
                                 return 1
                             fi
@@ -1312,7 +1312,7 @@ delete_single_node() {
 
     # 清理节点绑定
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file ".bindings = [.bindings[] | select(.port != \"$port\")]" "$NODE_USERS_FILE"; then
+        if ! update_json_file --arg port "$port" '.bindings = [.bindings[] | select(.port != $port)]' "$NODE_USERS_FILE"; then
             print_error "清理节点绑定失败"
             return 1
         fi

@@ -84,14 +84,14 @@ bind_user_to_node() {
     if [[ -z "$binding_exists" ]]; then
         # 创建新绑定
         local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-        if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "创建绑定失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             return 1
         fi
     else
         # 添加用户到现有绑定
-        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "添加用户到绑定失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             return 1
@@ -399,13 +399,13 @@ bind_single_node_to_user() {
 
     if [[ -z "$binding_exists" ]]; then
         local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-        if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "创建绑定失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             return 1
         fi
     else
-        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "添加用户到绑定失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             return 1
@@ -464,13 +464,13 @@ batch_bind_nodes_to_user() {
 
         if [[ -z "$binding_exists" ]]; then
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "创建绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
             fi
         else
-            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "添加用户到绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
@@ -662,14 +662,14 @@ batch_bind_user_to_nodes() {
         if [[ -z "$binding_exists" ]]; then
             # 创建新绑定
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "创建绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
             fi
         else
             # 添加用户到现有绑定
-            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "添加用户到绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
@@ -733,13 +733,13 @@ bind_single_user_to_node() {
 
     if [[ -z "$binding_exists" ]]; then
         local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-        if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "创建绑定失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             return 1
         fi
     else
-        if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+        if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
             print_error "添加用户到绑定失败"
             rm -f "${NODE_USERS_FILE}.tmp"
             return 1
@@ -795,13 +795,13 @@ batch_bind_users_to_node() {
 
         if [[ -z "$binding_exists" ]]; then
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "创建绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
             fi
         else
-            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "添加用户到绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
@@ -1127,13 +1127,13 @@ bind_nodes_to_user_smart() {
 
         if [[ -z "$binding_exists" ]]; then
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "创建绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
             fi
         else
-            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "添加用户到绑定失败"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
@@ -1409,14 +1409,14 @@ bind_users_to_node_smart() {
         if [[ -z "$binding_exists" || "$binding_exists" == "null" ]]; then
             # Create new binding entry
             local protocol=$(jq -r ".nodes[] | select(.port == \"$port\") | .protocol" "$NODES_FILE")
-            if ! jq ".bindings += [{port: \"$port\", protocol: \"$protocol\", users: [\"$uuid\"]}]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg protocol "$protocol" --arg uuid "$uuid" '.bindings += [{port: $port, protocol: $protocol, users: [$uuid]}]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "Failed to create binding"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
             fi
         else
             # Append to existing binding
-            if ! jq "(.bindings[] | select(.port == \"$port\") | .users) += [\"$uuid\"]" "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
+            if ! jq --arg port "$port" --arg uuid "$uuid" '(.bindings[] | select(.port == $port) | .users) += [$uuid]' "$NODE_USERS_FILE" > "${NODE_USERS_FILE}.tmp"; then
                 print_error "Failed to add user to binding"
                 rm -f "${NODE_USERS_FILE}.tmp"
                 continue
