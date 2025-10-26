@@ -69,7 +69,7 @@ init_admin_user() {
         --arg email "$admin_email" \
         '{id: $id, username: $username, password: $password, email: $email, level: 0, traffic_limit_gb: "unlimited", traffic_used_gb: "0", expire_date: "unlimited", created: (now|todate), enabled: true}')
 
-    jq ".users += [$admin_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    jq --argjson admin_data "$admin_data" '.users += [$admin_data]' "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "默认admin用户初始化成功"
@@ -228,7 +228,7 @@ add_global_user() {
         --arg expire "$expire_date" \
         '{id: $id, username: $username, password: $password, email: $email, level: ($level|tonumber), traffic_limit_gb: $traffic_limit, traffic_used_gb: $traffic_used, expire_date: $expire, created: (now|todate), enabled: true}')
 
-    jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    jq --argjson user_data "$user_data" '.users += [$user_data]' "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 
     print_success "全局用户添加成功！"
@@ -392,26 +392,37 @@ delete_single_user() {
             done <<< "$sub_names"
 
             # 从元数据中删除
-            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
+            local tmp_file="${SUBSCRIPTION_META_FILE}.tmp"
+            if ! jq --arg uuid "$uuid" '.subscriptions = [.subscriptions[] | select(.user_id != $uuid)]' "$SUBSCRIPTION_META_FILE" > "$tmp_file"; then
                 print_error "清理订阅元数据失败"
+                rm -f "$tmp_file"
                 return 1
             fi
+            mv "$tmp_file" "$SUBSCRIPTION_META_FILE"
             print_info "已清理订阅元数据"
         fi
     fi
 
     # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
+        local tmp_file="${NODE_USERS_FILE}.tmp"
+        if ! jq --arg uuid "$uuid" '(.bindings[].users) |= map(select(. != $uuid))' "$NODE_USERS_FILE" > "$tmp_file"; then
             print_error "清理节点绑定关系失败"
+            rm -f "$tmp_file"
             return 1
         fi
+        mv "$tmp_file" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
     # 3. 从全局用户列表删除
-    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
-    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+    local tmp_file="${USERS_FILE}.tmp"
+    if ! jq --arg uuid "$uuid" '.users = [.users[] | select(.id != $uuid)]' "$USERS_FILE" > "$tmp_file"; then
+        print_error "删除用户失败"
+        rm -f "$tmp_file"
+        return 1
+    fi
+    mv "$tmp_file" "$USERS_FILE"
 
     print_success "用户删除成功"
 
@@ -466,26 +477,37 @@ delete_global_user() {
                 print_info "已删除订阅文件: $sub_name"
             done <<< "$sub_names"
 
-            if ! update_json_file ".subscriptions = [.subscriptions[] | select(.user_id != \"$uuid\")]" "$SUBSCRIPTION_META_FILE"; then
+            local tmp_file="${SUBSCRIPTION_META_FILE}.tmp"
+            if ! jq --arg uuid "$uuid" '.subscriptions = [.subscriptions[] | select(.user_id != $uuid)]' "$SUBSCRIPTION_META_FILE" > "$tmp_file"; then
                 print_error "清理订阅元数据失败"
+                rm -f "$tmp_file"
                 return 1
             fi
+            mv "$tmp_file" "$SUBSCRIPTION_META_FILE"
             print_info "已清理订阅元数据"
         fi
     fi
 
     # 2. 从所有节点解绑
     if [[ -f "$NODE_USERS_FILE" ]]; then
-        if ! update_json_file "(.bindings[].users) |= map(select(. != \"$uuid\"))" "$NODE_USERS_FILE"; then
+        local tmp_file="${NODE_USERS_FILE}.tmp"
+        if ! jq --arg uuid "$uuid" '(.bindings[].users) |= map(select(. != $uuid))' "$NODE_USERS_FILE" > "$tmp_file"; then
             print_error "清理节点绑定关系失败"
+            rm -f "$tmp_file"
             return 1
         fi
+        mv "$tmp_file" "$NODE_USERS_FILE"
         print_info "已清理节点绑定关系"
     fi
 
     # 3. 从全局用户列表删除
-    jq ".users = [.users[] | select(.id != \"$uuid\")]" "$USERS_FILE" > "${USERS_FILE}.tmp"
-    mv "${USERS_FILE}.tmp" "$USERS_FILE"
+    local tmp_file="${USERS_FILE}.tmp"
+    if ! jq --arg uuid "$uuid" '.users = [.users[] | select(.id != $uuid)]' "$USERS_FILE" > "$tmp_file"; then
+        print_error "删除用户失败"
+        rm -f "$tmp_file"
+        return 1
+    fi
+    mv "$tmp_file" "$USERS_FILE"
 
     print_success "用户删除成功"
 
@@ -649,7 +671,7 @@ save_user_info() {
         --arg email "$email" \
         '{port: $port, protocol: $protocol, id: $id, email: $email, created: now|todate}')
 
-    jq ".users += [$user_data]" "$USERS_FILE" > "${USERS_FILE}.tmp"
+    jq --argjson user_data "$user_data" '.users += [$user_data]' "$USERS_FILE" > "${USERS_FILE}.tmp"
     mv "${USERS_FILE}.tmp" "$USERS_FILE"
 }
 
