@@ -139,6 +139,9 @@ add_http_outbound() {
     echo -e "  标签: $tag"
     echo -e "  服务器: $server:$port"
     [[ -n "$username" ]] && echo -e "  认证: 已启用 (用户: $username)"
+
+    # 提示是否绑定到节点
+    prompt_bind_outbound_to_node "$tag"
 }
 
 #================================================================
@@ -230,6 +233,9 @@ add_socks_outbound() {
     echo -e "  标签: $tag"
     echo -e "  服务器: $server:$port"
     [[ -n "$username" ]] && echo -e "  认证: 已启用 (用户: $username)"
+
+    # 提示是否绑定到节点
+    prompt_bind_outbound_to_node "$tag"
 }
 
 #================================================================
@@ -332,6 +338,9 @@ add_vless_outbound() {
     echo -e "  服务器: $server:$port"
     echo -e "  UUID: ${uuid:0:8}...${uuid: -8}"
     [[ -n "$flow" ]] && echo -e "  流控: $flow"
+
+    # 提示是否绑定到节点
+    prompt_bind_outbound_to_node "$tag"
 }
 
 #================================================================
@@ -435,6 +444,9 @@ add_vmess_outbound() {
     echo -e "  服务器: $server:$port"
     echo -e "  UUID: ${uuid:0:8}...${uuid: -8}"
     echo -e "  加密: $security"
+
+    # 提示是否绑定到节点
+    prompt_bind_outbound_to_node "$tag"
 }
 
 #================================================================
@@ -515,6 +527,9 @@ add_trojan_outbound() {
     echo -e "  标签: $tag"
     echo -e "  服务器: $server:$port"
     echo -e "  密码: ${password:0:4}***${password: -4}"
+
+    # 提示是否绑定到节点
+    prompt_bind_outbound_to_node "$tag"
 }
 
 #================================================================
@@ -618,6 +633,100 @@ add_shadowsocks_outbound() {
     echo -e "  服务器: $server:$port"
     echo -e "  加密: $method"
     echo -e "  密码: ${password:0:4}***${password: -4}"
+
+    # 提示是否绑定到节点
+    prompt_bind_outbound_to_node "$tag"
+}
+
+#================================================================
+# 添加出站规则后的绑定提示
+#================================================================
+prompt_bind_outbound_to_node() {
+    local outbound_tag=$1
+
+    # 检查是否有节点
+    if [[ ! -f "$NODES_FILE" ]]; then
+        return 0
+    fi
+
+    local node_count=$(jq '.nodes | length' "$NODES_FILE" 2>/dev/null || echo "0")
+    if [[ "$node_count" -eq 0 ]]; then
+        return 0
+    fi
+
+    echo ""
+    echo -e "${OUTBOUND_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${OUTBOUND_NC}"
+    read -p "是否将此出站规则应用到现有节点? [y/N]: " apply_now
+    if [[ "$apply_now" != "y" && "$apply_now" != "Y" ]]; then
+        print_info "稍后可通过 '应用出站规则' 菜单进行绑定"
+        return 0
+    fi
+
+    # 显示节点列表
+    echo ""
+    echo -e "${OUTBOUND_CYAN}现有节点列表：${OUTBOUND_NC}"
+    echo ""
+    printf "${OUTBOUND_CYAN}%-4s %-20s %-12s %-8s %-20s${OUTBOUND_NC}\n" "序号" "节点名称" "协议" "端口" "当前出站"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    local index=1
+    while read -r node; do
+        local name=$(echo "$node" | jq -r '.name // "未命名"')
+        local protocol=$(echo "$node" | jq -r '.protocol')
+        local port=$(echo "$node" | jq -r '.port')
+        local current_outbound=$(echo "$node" | jq -r '.outbound_tag // "未设置"')
+
+        # 截断过长的名称
+        if [[ ${#name} -gt 18 ]]; then
+            name="${name:0:15}..."
+        fi
+
+        printf "%-4s %-20s %-12s %-8s %-20s\n" "$index" "$name" "$protocol" "$port" "$current_outbound"
+        ((index++))
+    done < <(jq -c '.nodes[]' "$NODES_FILE" 2>/dev/null)
+
+    echo ""
+    read -p "请输入节点序号（多个用空格分隔，0=全部）: " node_indices
+
+    if [[ -z "$node_indices" ]]; then
+        print_info "已取消绑定"
+        return 0
+    fi
+
+    # 如果选择0，应用到所有节点
+    if [[ "$node_indices" == "0" ]]; then
+        jq --arg tag "$outbound_tag" '(.nodes[].outbound_tag) = $tag' "$NODES_FILE" > "${NODES_FILE}.tmp"
+        mv "${NODES_FILE}.tmp" "$NODES_FILE"
+        generate_xray_config
+        restart_xray
+        print_success "已将出站规则 '$outbound_tag' 应用到所有节点"
+        return 0
+    fi
+
+    local success_count=0
+    for node_idx in $node_indices; do
+        if [[ ! "$node_idx" =~ ^[0-9]+$ ]]; then
+            print_warning "跳过无效序号: $node_idx"
+            continue
+        fi
+
+        # 更新节点的出站标签
+        jq "(.nodes[$((node_idx-1))].outbound_tag) = \"$outbound_tag\"" "$NODES_FILE" > "${NODES_FILE}.tmp"
+        if [[ $? -eq 0 ]]; then
+            mv "${NODES_FILE}.tmp" "$NODES_FILE"
+            ((success_count++))
+        else
+            rm -f "${NODES_FILE}.tmp"
+        fi
+    done
+
+    if [[ $success_count -gt 0 ]]; then
+        generate_xray_config
+        restart_xray
+        print_success "成功将出站规则 '$outbound_tag' 应用到 $success_count 个节点"
+    else
+        print_error "未能应用出站规则到任何节点"
+    fi
 }
 
 #================================================================
@@ -996,13 +1105,11 @@ delete_outbound() {
 
     print_success "出站规则已删除: $tag"
 
-    # 3. 重新生成 Xray 配置
-    if [[ -n "$affected_nodes" ]]; then
-        print_info "正在重新生成配置..."
-        generate_xray_config
-        restart_xray
-        print_success "配置已更新并重启服务"
-    fi
+    # 3. 重新生成 Xray 配置（无论是否有受影响节点都需要重新生成）
+    print_info "正在重新生成配置..."
+    generate_xray_config
+    restart_xray
+    print_success "配置已更新并重启服务"
 }
 
 #================================================================
