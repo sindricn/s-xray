@@ -46,10 +46,10 @@ show_outbound_status() {
         applied_count=$(jq '[.nodes[] | select(.outbound_tag != null)] | length' "$NODES_FILE" 2>/dev/null || echo "0")
     fi
 
-    # 3. 配置文件中的实际出站数量
+    # 3. 配置文件中的实际出站数量（排除系统默认的direct/block/api）
     local config_count=0
     if [[ -f "$XRAY_CONFIG" ]]; then
-        config_count=$(jq '[.outbounds[] | select(.tag | startswith("outbound-"))] | length' "$XRAY_CONFIG" 2>/dev/null || echo "0")
+        config_count=$(jq '[.outbounds[] | select(.tag != "direct" and .tag != "block" and .tag != "api")] | length' "$XRAY_CONFIG" 2>/dev/null || echo "0")
     fi
 
     echo -e "${OUTBOUND_CYAN}═══════════════════════════════════════${OUTBOUND_NC}"
@@ -79,9 +79,42 @@ check_outbound_consistency() {
 
     # 获取规则库中的所有tag
     local library_tags=$(jq -r '.outbounds[].tag' "$OUTBOUND_FILE" 2>/dev/null | sort)
+    local library_count=$(echo "$library_tags" | grep -v '^$' | wc -l)
 
-    # 获取配置文件中以"outbound-"开头的tag（这些是自定义出站规则）
-    local config_tags=$(jq -r '[.outbounds[] | select(.tag | startswith("outbound-")) | .tag] | .[]' "$XRAY_CONFIG" 2>/dev/null | sort)
+    # 系统默认的出站规则tag（需要排除）
+    local system_tags=("direct" "block" "api")
+
+    # 获取配置文件中的所有出站规则tag，排除系统默认的
+    local config_tags=$(jq -r '[.outbounds[].tag] | .[]' "$XRAY_CONFIG" 2>/dev/null | while read -r tag; do
+        # 检查是否是系统tag
+        local is_system=false
+        for sys_tag in "${system_tags[@]}"; do
+            if [[ "$tag" == "$sys_tag" ]]; then
+                is_system=true
+                break
+            fi
+        done
+        # 只输出非系统tag
+        [[ "$is_system" == "false" ]] && echo "$tag"
+    done | sort)
+    local config_count=$(echo "$config_tags" | grep -v '^$' | wc -l)
+
+    # 显示检测信息
+    echo -e "${OUTBOUND_YELLOW}检测信息：${OUTBOUND_NC}"
+    echo -e "  规则库中的出站规则: $library_count 个"
+    if [[ $library_count -gt 0 ]]; then
+        echo "$library_tags" | while read -r tag; do
+            [[ -n "$tag" ]] && echo -e "    - $tag"
+        done
+    fi
+    echo ""
+    echo -e "  配置文件中的出站规则: $config_count 个（已排除系统默认规则）"
+    if [[ $config_count -gt 0 ]]; then
+        echo "$config_tags" | while read -r tag; do
+            [[ -n "$tag" ]] && echo -e "    - $tag"
+        done
+    fi
+    echo ""
 
     # 找出配置文件中有但规则库中没有的（异常规则）
     local orphan_tags=""
