@@ -833,29 +833,98 @@ list_outbounds() {
 
     echo -e "${OUTBOUND_YELLOW}出站规则总数:${OUTBOUND_NC} $count"
     echo ""
-    printf "${OUTBOUND_CYAN}%-4s %-20s %-18s %-12s %-10s${OUTBOUND_NC}\n" "序号" "标签" "协议" "Mux" "地址/端口"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     local index=1
     while read -r outbound; do
         local tag=$(echo "$outbound" | jq -r '.tag')
         local protocol=$(echo "$outbound" | jq -r '.protocol')
-        local mux_enabled=$(echo "$outbound" | jq -r '.mux.enabled // false')
-        local mux_concurrency=$(echo "$outbound" | jq -r '.mux.concurrency // 0')
 
-        # 获取地址和端口（不同协议结构不同）
+        # 显示出站规则摘要
+        echo -e "${OUTBOUND_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${OUTBOUND_NC}"
+        echo -e "${OUTBOUND_GREEN}[$index] $tag${OUTBOUND_NC} ($(get_outbound_type_name "$protocol"))"
+
+        # 获取服务器信息
         local address=$(echo "$outbound" | jq -r '.settings.servers[0].address // .settings.vnext[0].address // "N/A"')
         local port=$(echo "$outbound" | jq -r '.settings.servers[0].port // .settings.vnext[0].port // "N/A"')
+        echo -e "  ${OUTBOUND_YELLOW}服务器:${OUTBOUND_NC} $address:$port"
 
-        local mux_display="否"
+        # 根据协议显示特定信息
+        case "$protocol" in
+            http|socks)
+                # 认证信息
+                local has_auth=$(echo "$outbound" | jq -r '.settings.servers[0].users // empty | length > 0')
+                if [[ "$has_auth" == "true" ]]; then
+                    local username=$(echo "$outbound" | jq -r '.settings.servers[0].users[0].user')
+                    echo -e "  ${OUTBOUND_YELLOW}认证:${OUTBOUND_NC} 已启用 (用户: $username)"
+                else
+                    echo -e "  ${OUTBOUND_YELLOW}认证:${OUTBOUND_NC} 未启用"
+                fi
+
+                # HTTP额外显示headers
+                if [[ "$protocol" == "http" ]]; then
+                    local user_agent=$(echo "$outbound" | jq -r '.settings.headers["User-Agent"] // "N/A"')
+                    if [[ "$user_agent" != "N/A" ]]; then
+                        echo -e "  ${OUTBOUND_YELLOW}User-Agent:${OUTBOUND_NC} ${user_agent:0:50}..."
+                    fi
+                fi
+                ;;
+            vless)
+                local uuid=$(echo "$outbound" | jq -r '.settings.vnext[0].users[0].id // "N/A"')
+                echo -e "  ${OUTBOUND_YELLOW}UUID:${OUTBOUND_NC} ${uuid:0:8}...${uuid: -8}"
+                local flow=$(echo "$outbound" | jq -r '.settings.vnext[0].users[0].flow // "无"')
+                echo -e "  ${OUTBOUND_YELLOW}流控:${OUTBOUND_NC} $flow"
+                ;;
+            vmess)
+                local uuid=$(echo "$outbound" | jq -r '.settings.vnext[0].users[0].id // "N/A"')
+                local security=$(echo "$outbound" | jq -r '.settings.vnext[0].users[0].security // "auto"')
+                echo -e "  ${OUTBOUND_YELLOW}UUID:${OUTBOUND_NC} ${uuid:0:8}...${uuid: -8}"
+                echo -e "  ${OUTBOUND_YELLOW}加密:${OUTBOUND_NC} $security"
+                ;;
+            trojan)
+                local password=$(echo "$outbound" | jq -r '.settings.servers[0].password // "N/A"')
+                echo -e "  ${OUTBOUND_YELLOW}密码:${OUTBOUND_NC} ${password:0:4}***${password: -4}"
+                ;;
+            shadowsocks)
+                local method=$(echo "$outbound" | jq -r '.settings.servers[0].method // "N/A"')
+                local password=$(echo "$outbound" | jq -r '.settings.servers[0].password // "N/A"')
+                echo -e "  ${OUTBOUND_YELLOW}加密:${OUTBOUND_NC} $method"
+                echo -e "  ${OUTBOUND_YELLOW}密码:${OUTBOUND_NC} ${password:0:4}***${password: -4}"
+                ;;
+        esac
+
+        # Mux配置
+        local mux_enabled=$(echo "$outbound" | jq -r '.mux.enabled // false')
         if [[ "$mux_enabled" == "true" ]]; then
-            mux_display="是($mux_concurrency)"
+            local mux_concurrency=$(echo "$outbound" | jq -r '.mux.concurrency // 8')
+            echo -e "  ${OUTBOUND_YELLOW}Mux:${OUTBOUND_NC} 已启用 (并发: $mux_concurrency)"
+        else
+            echo -e "  ${OUTBOUND_YELLOW}Mux:${OUTBOUND_NC} 未启用"
         fi
 
-        printf "%-4s %-20s %-18s %-12s %-10s\n" "$index" "$tag" "$protocol" "$mux_display" "$address:$port"
+        # TLS配置(如果有)
+        local tls_enabled=$(echo "$outbound" | jq -r '.streamSettings.security // "none"')
+        if [[ "$tls_enabled" != "none" ]]; then
+            echo -e "  ${OUTBOUND_YELLOW}传输层安全:${OUTBOUND_NC} $tls_enabled"
+            if [[ "$tls_enabled" == "tls" ]]; then
+                local sni=$(echo "$outbound" | jq -r '.streamSettings.tlsSettings.serverName // "N/A"')
+                [[ "$sni" != "N/A" ]] && echo -e "  ${OUTBOUND_YELLOW}SNI:${OUTBOUND_NC} $sni"
+            elif [[ "$tls_enabled" == "reality" ]]; then
+                local public_key=$(echo "$outbound" | jq -r '.streamSettings.realitySettings.publicKey // "N/A"')
+                [[ "$public_key" != "N/A" ]] && echo -e "  ${OUTBOUND_YELLOW}PublicKey:${OUTBOUND_NC} ${public_key:0:16}..."
+            fi
+        fi
+
+        # 传输协议(如果有)
+        local network=$(echo "$outbound" | jq -r '.streamSettings.network // "tcp"')
+        if [[ "$network" != "tcp" ]]; then
+            echo -e "  ${OUTBOUND_YELLOW}传输协议:${OUTBOUND_NC} $network"
+        fi
+
+        echo ""
         ((index++))
     done < <(jq -c '.outbounds[]' "$OUTBOUND_FILE" 2>/dev/null)
 
+    echo -e "${OUTBOUND_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${OUTBOUND_NC}"
     echo ""
 }
 
@@ -1087,16 +1156,21 @@ modify_outbound_auth() {
         return 1
     fi
 
-    local current_user=$(jq -r ".outbounds[$((index-1))].settings.servers[0].user // \"\"" "$OUTBOUND_FILE")
+    # 正确获取当前认证信息(从users数组中)
+    local current_user=$(jq -r ".outbounds[$((index-1))].settings.servers[0].users[0].user // \"\"" "$OUTBOUND_FILE")
 
     echo ""
-    [[ -n "$current_user" ]] && echo -e "${OUTBOUND_YELLOW}当前认证用户: $current_user${OUTBOUND_NC}"
+    if [[ -n "$current_user" ]]; then
+        echo -e "${OUTBOUND_YELLOW}当前认证用户: $current_user${OUTBOUND_NC}"
+    else
+        echo -e "${OUTBOUND_YELLOW}当前未启用认证${OUTBOUND_NC}"
+    fi
     echo ""
 
     read -p "是否启用认证? [y/N]: " enable_auth
     if [[ "$enable_auth" != "y" && "$enable_auth" != "Y" ]]; then
-        # 移除认证
-        jq "del(.outbounds[$((index-1))].settings.servers[0].user, .outbounds[$((index-1))].settings.servers[0].pass)" \
+        # 移除认证(删除users数组)
+        jq "del(.outbounds[$((index-1))].settings.servers[0].users)" \
            "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
         mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
         print_success "认证已禁用"
@@ -1111,9 +1185,9 @@ modify_outbound_auth() {
         return 1
     fi
 
+    # 正确更新认证信息(更新users数组)
     jq --arg user "$username" --arg pass "$password" \
-       "(.outbounds[$((index-1))].settings.servers[0].user) = \$user |
-        (.outbounds[$((index-1))].settings.servers[0].pass) = \$pass" \
+       "(.outbounds[$((index-1))].settings.servers[0].users) = [{user: \$user, pass: \$pass, level: 0}]" \
        "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
     mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
 
