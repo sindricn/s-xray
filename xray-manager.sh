@@ -3,8 +3,9 @@
 #================================================================
 # Xray-Core 一键管理脚本
 # 支持功能：内核管理、节点管理、用户管理、订阅管理、状态监控、防火墙管理
-# 版本：v1.2.0
-# 优化：基于 s-hy2 最佳实践
+# 版本：V1.0.0
+# 项目地址：https://github.com/sindricn/s-xray
+# 作者博客：blog.nbvil.com
 #================================================================
 
 # 严格模式
@@ -159,6 +160,33 @@ get_online_users_count() {
     echo "$online"
 }
 
+# 关于脚本
+show_about() {
+    clear
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          关于脚本                    ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${YELLOW}脚本名称：${NC}Xray-Core 一键管理脚本"
+    echo -e "${YELLOW}脚本版本：${NC}V1.0.0"
+    echo ""
+    echo -e "${YELLOW}功能简介：${NC}"
+    echo -e "  • Xray 内核安装、更新、卸载"
+    echo -e "  • 多协议节点管理（VLESS、VMess、Trojan、Shadowsocks等）"
+    echo -e "  • 用户管理与流量统计"
+    echo -e "  • 订阅链接生成（支持Base64、Clash、SingBox格式）"
+    echo -e "  • 域名与证书管理（自动申请SSL证书）"
+    echo -e "  • 出站规则管理（代理链、分流规则）"
+    echo -e "  • 防火墙与端口管理"
+    echo ""
+    echo -e "${YELLOW}项目地址：${NC}${BLUE}https://github.com/sindricn/s-xray${NC}"
+    echo -e "${YELLOW}作者博客：${NC}${BLUE}blog.nbvil.com${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    read -p "按 Enter 键返回主菜单..."
+}
+
 # 主菜单
 show_menu() {
     clear
@@ -194,7 +222,7 @@ show_menu() {
     fi
 
     echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║    Xray-Core 一键管理脚本 v1.2.2    ║${NC}"
+    echo -e "${CYAN}║    Xray-Core 一键管理脚本 V1.0.0    ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${CYAN}┌─────────────────────────────────────┐${NC}"
@@ -220,6 +248,7 @@ show_menu() {
     echo -e "${CYAN}│${NC}  ${GREEN}8.${NC}  防火墙管理                     ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────┤${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}9.${NC}  脚本管理                       ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${GREEN}10.${NC} 关于脚本                       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}  ${GREEN}0.${NC}  退出脚本                       ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────┘${NC}"
     echo ""
@@ -1927,7 +1956,7 @@ main() {
     # 初始化默认admin用户
     init_admin_user
 
-    log_info "Xray 管理脚本启动 (v1.2.2)"
+    log_info "Xray 管理脚本启动 (V1.0.0)"
 
     while true; do
         show_menu
@@ -1943,6 +1972,7 @@ main() {
             7) menu_outbound ;;          # 出站规则
             8) menu_firewall ;;          # 防火墙管理
             9) menu_script ;;            # 脚本管理
+            10) show_about ;;            # 关于脚本
             0)
                 echo ""
                 echo -e "${GREEN}感谢使用 Xray 管理脚本！${NC}"

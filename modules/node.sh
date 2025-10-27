@@ -507,14 +507,6 @@ generate_vless_reality_share() {
     echo -e "${YELLOW}提示：复制以上链接导入到支持 Reality 的客户端${NC}"
 }
 
-# 读取 VLESS 配置文档
-read_vless_doc() {
-    local vless_doc="$script_dir/docs/inbounds/vless.md"
-    if [[ -f "$vless_doc" ]]; then
-        cat "$vless_doc"
-    fi
-}
-
 # 添加 VLESS 节点（非Reality）
 add_vless_node() {
     clear
