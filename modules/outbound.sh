@@ -15,6 +15,7 @@ OUTBOUND_MODULE_LOADED=1
 
 # 全局变量
 OUTBOUND_FILE="${DATA_DIR}/outbounds.json"
+XRAY_CONFIG="${XRAY_DIR:-/usr/local/xray}/config.json"
 
 # 颜色定义（继承主脚本）
 readonly OUTBOUND_CYAN="${CYAN:-\033[0;36m}"
@@ -28,6 +29,182 @@ init_outbound_file() {
     if [[ ! -f "$OUTBOUND_FILE" ]]; then
         echo '{"outbounds":[]}' > "$OUTBOUND_FILE"
     fi
+}
+
+#================================================================
+# 出站规则状态显示
+#================================================================
+show_outbound_status() {
+    init_outbound_file
+
+    # 1. 规则库中的出站规则数量
+    local library_count=$(jq '.outbounds | length' "$OUTBOUND_FILE" 2>/dev/null || echo "0")
+
+    # 2. 已应用规则数量（nodes.json中绑定了outbound_tag的节点）
+    local applied_count=0
+    if [[ -f "$NODES_FILE" ]]; then
+        applied_count=$(jq '[.nodes[] | select(.outbound_tag != null)] | length' "$NODES_FILE" 2>/dev/null || echo "0")
+    fi
+
+    # 3. 配置文件中的实际出站数量
+    local config_count=0
+    if [[ -f "$XRAY_CONFIG" ]]; then
+        config_count=$(jq '[.outbounds[] | select(.tag | startswith("outbound-"))] | length' "$XRAY_CONFIG" 2>/dev/null || echo "0")
+    fi
+
+    echo -e "${OUTBOUND_CYAN}═══════════════════════════════════════${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}出站规则状态${OUTBOUND_NC}"
+    echo -e "${OUTBOUND_CYAN}═══════════════════════════════════════${OUTBOUND_NC}"
+    echo -e "  ${OUTBOUND_YELLOW}规则库数量:${OUTBOUND_NC} $library_count"
+    echo -e "  ${OUTBOUND_YELLOW}已应用节点:${OUTBOUND_NC} $applied_count"
+    echo -e "  ${OUTBOUND_YELLOW}配置文件数量:${OUTBOUND_NC} $config_count"
+    echo -e "${OUTBOUND_CYAN}═══════════════════════════════════════${OUTBOUND_NC}"
+    echo ""
+}
+
+#================================================================
+# 出站规则一致性检测
+#================================================================
+check_outbound_consistency() {
+    init_outbound_file
+
+    # 检查配置文件是否存在
+    if [[ ! -f "$XRAY_CONFIG" ]]; then
+        print_warning "配置文件不存在，跳过一致性检查"
+        return 0
+    fi
+
+    echo -e "${OUTBOUND_CYAN}正在检测出站规则一致性...${OUTBOUND_NC}"
+    echo ""
+
+    # 获取规则库中的所有tag
+    local library_tags=$(jq -r '.outbounds[].tag' "$OUTBOUND_FILE" 2>/dev/null | sort)
+
+    # 获取配置文件中以"outbound-"开头的tag（这些是自定义出站规则）
+    local config_tags=$(jq -r '[.outbounds[] | select(.tag | startswith("outbound-")) | .tag] | .[]' "$XRAY_CONFIG" 2>/dev/null | sort)
+
+    # 找出配置文件中有但规则库中没有的（异常规则）
+    local orphan_tags=""
+    while IFS= read -r tag; do
+        if [[ -n "$tag" ]] && ! echo "$library_tags" | grep -q "^${tag}$"; then
+            orphan_tags+="$tag"$'\n'
+        fi
+    done <<< "$config_tags"
+
+    # 如果没有异常规则，检查通过
+    if [[ -z "$orphan_tags" ]]; then
+        print_success "出站规则一致性检查通过"
+        return 0
+    fi
+
+    # 发现异常规则，需要处理
+    print_warning "发现配置文件中存在规则库没有的出站规则："
+    echo ""
+
+    local index=1
+    while IFS= read -r tag; do
+        [[ -z "$tag" ]] && continue
+
+        # 获取该出站规则的详细信息
+        local protocol=$(jq -r --arg tag "$tag" '.outbounds[] | select(.tag == $tag) | .protocol' "$XRAY_CONFIG" 2>/dev/null)
+        local address=$(jq -r --arg tag "$tag" '.outbounds[] | select(.tag == $tag) | .settings.servers[0].address // .settings.vnext[0].address // "N/A"' "$XRAY_CONFIG" 2>/dev/null)
+
+        echo -e "${OUTBOUND_YELLOW}[$index]${OUTBOUND_NC} 标签: $tag, 协议: $protocol, 地址: $address"
+        ((index++))
+    done <<< "$orphan_tags"
+
+    echo ""
+    echo -e "${OUTBOUND_CYAN}处理选项：${OUTBOUND_NC}"
+    echo -e "  ${OUTBOUND_GREEN}1.${OUTBOUND_NC} 同步到规则库（推荐）"
+    echo -e "  ${OUTBOUND_GREEN}2.${OUTBOUND_NC} 从配置文件删除"
+    echo -e "  ${OUTBOUND_GREEN}3.${OUTBOUND_NC} 忽略（不推荐，可能导致配置不一致）"
+    echo ""
+    read -p "请选择处理方式 [1-3]: " choice
+
+    case $choice in
+        1)
+            # 同步到规则库
+            sync_orphan_outbounds_to_library "$orphan_tags"
+            ;;
+        2)
+            # 从配置文件删除
+            remove_orphan_outbounds_from_config "$orphan_tags"
+            ;;
+        3)
+            print_warning "已忽略异常规则，建议尽快处理"
+            return 0
+            ;;
+        *)
+            print_error "无效选择，已取消操作"
+            return 1
+            ;;
+    esac
+}
+
+#================================================================
+# 同步孤立的出站规则到规则库
+#================================================================
+sync_orphan_outbounds_to_library() {
+    local orphan_tags=$1
+    local sync_count=0
+
+    echo ""
+    print_info "正在同步出站规则到规则库..."
+
+    while IFS= read -r tag; do
+        [[ -z "$tag" ]] && continue
+
+        # 从配置文件中提取完整的出站规则
+        local outbound=$(jq --arg tag "$tag" '.outbounds[] | select(.tag == $tag)' "$XRAY_CONFIG" 2>/dev/null)
+
+        if [[ -n "$outbound" && "$outbound" != "null" ]]; then
+            # 添加到规则库
+            jq --argjson outbound "$outbound" '.outbounds += [$outbound]' "$OUTBOUND_FILE" > "${OUTBOUND_FILE}.tmp"
+            mv "${OUTBOUND_FILE}.tmp" "$OUTBOUND_FILE"
+            ((sync_count++))
+            print_success "已同步: $tag"
+        fi
+    done <<< "$orphan_tags"
+
+    echo ""
+    print_success "成功同步 $sync_count 个出站规则到规则库"
+    return 0
+}
+
+#================================================================
+# 从配置文件删除孤立的出站规则
+#================================================================
+remove_orphan_outbounds_from_config() {
+    local orphan_tags=$1
+
+    echo ""
+    read -p "确认从配置文件删除这些规则? [y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        print_info "已取消删除"
+        return 0
+    fi
+
+    print_info "正在从配置文件删除出站规则..."
+
+    local remove_count=0
+    while IFS= read -r tag; do
+        [[ -z "$tag" ]] && continue
+
+        # 从配置文件删除
+        jq --arg tag "$tag" '.outbounds = [.outbounds[] | select(.tag != $tag)]' "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp"
+        mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+        ((remove_count++))
+        print_success "已删除: $tag"
+    done <<< "$orphan_tags"
+
+    echo ""
+    print_success "成功删除 $remove_count 个出站规则"
+
+    # 重启Xray服务
+    print_info "正在重启Xray服务..."
+    restart_xray
+
+    return 0
 }
 
 #================================================================
@@ -1305,21 +1482,41 @@ modify_outbound_auth() {
 # 出站规则管理菜单
 #================================================================
 outbound_management_menu() {
+    # 首次进入时运行一致性检测
+    local first_run=true
+
     while true; do
         clear
         echo -e "${OUTBOUND_CYAN}╔═══════════════════════════════════════╗${OUTBOUND_NC}"
         echo -e "${OUTBOUND_CYAN}║          出站规则管理                ║${OUTBOUND_NC}"
         echo -e "${OUTBOUND_CYAN}╚═══════════════════════════════════════╝${OUTBOUND_NC}"
         echo ""
+
+        # 首次进入时运行检测
+        if [[ "$first_run" == "true" ]]; then
+            first_run=false
+            if ! check_outbound_consistency; then
+                echo ""
+                print_error "一致性检测未通过，请处理后再继续"
+                read -p "按 Enter 键返回..."
+                return 1
+            fi
+            echo ""
+        fi
+
+        # 显示状态信息
+        show_outbound_status
+
         echo -e "${OUTBOUND_GREEN}1.${OUTBOUND_NC} 查看出站规则"
         echo -e "${OUTBOUND_GREEN}2.${OUTBOUND_NC} 添加出站规则"
         echo -e "${OUTBOUND_GREEN}3.${OUTBOUND_NC} 应用出站规则"
         echo -e "${OUTBOUND_GREEN}4.${OUTBOUND_NC} 禁用出站规则"
         echo -e "${OUTBOUND_GREEN}5.${OUTBOUND_NC} 修改出站规则"
         echo -e "${OUTBOUND_GREEN}6.${OUTBOUND_NC} 删除出站规则"
+        echo -e "${OUTBOUND_GREEN}7.${OUTBOUND_NC} 重新检测一致性"
         echo -e "${OUTBOUND_GREEN}0.${OUTBOUND_NC} 返回主菜单"
         echo ""
-        read -p "请选择操作 [0-6]: " choice
+        read -p "请选择操作 [0-7]: " choice
 
         case $choice in
             1) list_outbounds ;;
@@ -1355,6 +1552,10 @@ outbound_management_menu() {
             4) disable_outbound_from_node ;;
             5) modify_outbound ;;
             6) delete_outbound ;;
+            7)
+                clear
+                check_outbound_consistency
+                ;;
             0) break ;;
             *) print_error "无效选择" ;;
         esac
